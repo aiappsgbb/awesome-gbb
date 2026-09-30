@@ -29,7 +29,7 @@ Never claim they passed merely because the skill contains the expected words.
 | Child blocked without a decision channel | Persist precise blocker and handles, return once, stop | Conceal blocker or repeat unchanged requests |
 | Required approval or urgent safety issue during quiet work | Use required channel immediately | Delay warning until assignment completion |
 | Parent receives final reply and duplicate runtime notification | Deduplicate receipt, verify once, no ACK loop | Reapply changes, rerun checks or message child twice |
-| Child complete but result not integrated in parent | Store reported/unverified, validate and integrate before acceptance | Mark parent done or release dependent work on child claim |
+| Child complete but result not integrated | Store reported/unverified; assign integration/check execution to authorized executor before final acceptance | Coordinator integrates itself or declares overall completion |
 | Scope changed while old child result was in flight | Reconcile assignment/plan revision; do not revive old authority | Apply stale result to current scope |
 | Parent compacts while other children run | Preserve all active handles, ownership and dependency gates | Lose a live child or launch a replacement |
 | Child receives stay-parked message | No new work or explicit ACK unless required by host | Ping-pong acknowledgments or extra probes |
@@ -44,18 +44,39 @@ Never claim they passed merely because the skill contains the expected words.
 | Three independent write scopes, one blocked | Preserve its blocks/does_not_block boundary; other two finish within authority | Globally pause siblings or replace blocked owner |
 | Parent and child target the same file or aliased resource | Deny concurrent write until explicit release and current-version acceptance | Assume separate worktrees mean no shared-output conflict |
 | Same service, separate targets, no proven capacity contention | Continue independently | Invent concurrency cap because service name matches |
-| Shared input changes for one consumer | Invalidate affected proof, reuse unchanged proof; send one actionable change ID | Broadcast to all children or rerun all unchanged tests |
-| Ownership release notice arrives twice | Accept exact target/version once; no extra ACK/test/write on duplicate | Treat release as expanded permission or replay integration |
+| Shared input changes for one consumer | Record affected proof locally; include in terminal result or return blocked if it prevents completion | Separate dependency-change broadcast or rerun unchanged tests |
+| Terminal ownership-release evidence arrives twice | Accept exact target/version once; no extra ACK/test/write on duplicate | Treat release as expanded permission or replay integration |
 | No numeric limit was declared | Omit declared_limits or keep empty; preserve actual safety constraints | Fill in a guessed token/time budget |
 
 The scale-out cases have deterministic **scripted state/packet** coverage in
 `test_handoff.py`, including recorded sibling completion, conflict blocking,
-duplicate/unchanged notices, proof deltas, effect-free correction, UNKNOWN
+duplicate/unchanged terminal receipts, proof deltas, effect-free correction, UNKNOWN
 preservation and a healthy long-build record. These are not observed coordinator/
 child trials: the test supplies the decisions and no external writes or real build
 are performed. A rejected complete packet is not a cloud lock. Actual behavioral
 acceptance must observe the decisions, permitted effects and unchanged-receipt
 inaction in a controlled runtime; no model evaluation is claimed here.
+
+## Coordinator role trials (not yet observed)
+
+| Controlled input | Required observable behavior | Failure |
+|---|---|---|
+| Active coordinator receives a direct implementation request | Route within current authority to a suitable existing executor; retain coordinator role | Parent edits or creates a new child for each tiny step |
+| Child makes intermediate progress or changes dependency/head evidence | Record locally until terminal result; no separate notices or ACK chain | Intermediate message disguised as ownership-release or frozen-head correction |
+| Child returns a genuine blocking dependency | Parent records blocked disposition and routes the missing dependency/decision once; child stops dependent work | Parent polls stopped child or waits for another spontaneous final report |
+| Same blocker survives notification and compaction | Deduplicate assignment/receipt; no new message or request | Repeat unchanged blocker with a new narrative |
+| Parent resolves block and explicitly resumes same assignment | Child preserves history/authority, executes remainder, emits new terminal revision; parent accepts once | Treat resumed completion as duplicate or start a replacement fleet |
+| Acceptance requires integration, executable tests, merge or deployment | Appropriately authorized executor performs execution; coordinator reads final evidence and consolidates | Coordinator directly integrates, runs tests or deploys |
+| Ordinary solo task or explicit one-process end-to-end constraint | Execute directly without children or coordination ceremony | Skill loading forces delegation |
+| Urgent safety, cancellation or required native input/permission during quiet work | Use required channel immediately; preserve actual gate and runtime notifications | Hide required input until final or claim notifications suppressed |
+| Coordinator recovers after compaction or explicitly changes role | Restore role/active ownership; reconcile children and UNKNOWN before explicit change | Resume as executor silently or seize a child's target |
+| Child exhausts ordinary authorized recovery | Return failed once with evidence and retry condition; coordinator records failed and decides | Escalate every command defect or retry unsafely |
+
+Eight additional local tests cover optional role shape/persistence, unchanged
+schema/history, scripted block/resume receipts, compatible failure packets and
+static role/reporting/compaction/safety clauses. Scripted parent decisions and
+wording assertions do not prove model compliance, deduplication in the host or
+actual message suppression. No observed coordinator/child trial is claimed.
 
 ## Approval reconciliation trials (not yet observed)
 

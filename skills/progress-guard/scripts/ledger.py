@@ -33,6 +33,10 @@ def coordination_fields(state):
         return isinstance(value, list) and all(valid(item, str) for item in value)
 
     result = {}
+    if "execution_role" in state:
+        if state["execution_role"] not in ("coordinator", "executor"):
+            raise ValueError("execution_role must be coordinator or executor")
+        result["execution_role"] = state["execution_role"]
     for name, fields in COORDINATION_FIELDS.items():
         if name not in state:
             continue

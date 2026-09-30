@@ -46,6 +46,15 @@ full snapshot/history, and sends no messages. A `delegation` object in the child
 state binds the assignment; the parent's optional `children` array tracks receipts,
 active handles and acceptance. These are additive state fields, not new tables
 or a replacement plan. Existing non-delegated ledgers remain valid.
+Persist `execution_role` (`coordinator` or `executor`) when coordinating or assigned
+work; absence in older/solo records does not create delegation or imply a role
+change. Restore the role and ownership before acting after compaction. The helper
+checks the value and includes it in terminal output, not enforcement of actions.
+Failed executions use existing `status: blocked` with explicit failed evidence
+and retry conditions in `summary`/`decision`/`blocker`; parent disposition is
+`failed`. Working/waiting snapshots cannot emit a handoff. Repeated reads return
+the same receipt, not authorization to send it again. A resolved-block resume
+keeps assignment identity and allows a later terminal revision.
 Optional coordination fields below also survive terminal `handoff` output; the
 same 4 KiB cap applies to the entire packet. Absence adds no defaults or budget.
 
@@ -97,9 +106,10 @@ the no-progress thresholds or an inherited template.
 
 ```json
 {
+  "execution_role": "executor",
   "assignment_scope": {
     "outcome": "Deliver the parser with regression proof",
-    "overall_outcome": "Usable import flow; integration still belongs to parent",
+    "overall_outcome": "Usable import flow; coordinator assigns integration to an executor",
     "write_scope": ["src/parser.py", "tests/test_parser.py"],
     "shared_capacity": [],
     "depends_on": ["schema@revision-a accepted"],
@@ -132,7 +142,10 @@ strings; list values contain nonempty strings (empty lists are permitted).
 for example `"user instruction: no cloud writes"`, not guessed quotas.
 Evidence entries include immutable references and a reuse/invalidation reason.
 For `ownership_released`, before/after identify the owner, exact target/version
-and disposition; releasing a target does not grant new authority.
+and disposition; releasing a target does not grant new authority. Keep these
+deltas local until the terminal result; `coordination_change` is retained evidence,
+not an intermediate-notice exception. A true blocking dependency warrants one
+terminal block and stopped dependent work, not a separate change message.
 
 The helper validates these shapes on append and handoff. It rejects identical
 literal scopes in both blocker lists and a change with equal before/after,
@@ -146,7 +159,7 @@ These are consistency checks, not proof of path aliasing, cloud write exclusion,
 permission, actual change, correct invalidation or independence. Human/agent owners
 still verify those facts. The helper neither schedules work nor sends notices,
 deduplicates cross-session delivery, times out builds, or replays operations.
-Record a receiver's accepted `change_id` in its existing receipt before acting;
+Record the coordinator's accepted terminal `change_id` in its existing receipt before acting;
 an unchanged/duplicate receipt has no new action. UNKNOWN and live ownership remain
 in `pending_operations`/the scope record across compaction even when other work
 completes. Shorten evidence pointers if a terminal packet exceeds 4 KiB; never drop

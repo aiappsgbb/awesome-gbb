@@ -2,8 +2,27 @@
 
 This contract applies to already-authorized delegation, not a reason to create
 agents. A child completes an **assignment**, not "the ledger". The ledger remains
-an append-only record. One child owns each assignment; the parent owns integration.
+an append-only record. One executor owns each assignment; the coordinator owns
+acceptance and routing, not execution of integration.
 Do independent work in parallel only when dependencies and write ownership allow.
+
+## Persistent roles
+
+Record `execution_role` as `coordinator` or `executor` in the existing snapshot
+and restore it before acting after compaction. This optional JSON field requires
+no schema migration; for an older ledger, reconcile actual assignments once and
+record the role without inventing history. Solo work remains direct execution.
+
+An active coordinator does not implement, build/test, deeply debug, integrate or
+merge source, or deploy deliverables. Reading relevant final artifacts/acceptance
+evidence and updating its consolidated ledger are coordination. Route a direct
+implementation request to an existing suitable executor within its authority;
+create another only for a genuine ownership need, not each tiny step.
+Integration, executable verification and publication require an appropriately
+authorized executor. The coordinator checks the returned evidence, not the build.
+An explicit role change first reconciles active children, writes, dependencies
+and UNKNOWN effects; it cannot silently seize a child's target. Preserve a user's
+one-process end-to-end constraint: stay a solo executor rather than force delegation.
 
 ## Parent: define the assignment before launch
 
@@ -22,6 +41,7 @@ accessible SKILL.md; if neither works, report blocked, do not pretend it loaded.
 Record failed native discovery and the permitted fallback path/version once.
 Reuse that route after compaction; retry discovery only on runtime/catalog change.
 Use your own session ledger and work ID. Do not write the parent's database.
+Role: executor; persist it across compaction. The parent coordinates only.
 Outcome / done_when: <end-to-end assigned result; distinguish overall user outcome>.
 Write scope / exclusions: <exact owned paths/resources; forbidden/shared writes>.
 Shared capacity: <actual limiting resource and evidence, if any; not write ownership>.
@@ -33,12 +53,16 @@ existing one bounded recovery; no invented numeric budget>.
 Avoid: <failed approaches + evidence pointers + concrete retry conditions>.
 Return channel: <one supported delivery mechanism to the known parent>.
 Intermediate findings go to your ledger, not parent messages.
-Return once on completion, block/decision-needed, or explicit pause; urgent
-safety/cancellation/permission gates are exceptions. No progress or ACK loop.
-One actionable dependency-change/ownership-release notice to affected consumers
-is allowed; persist its change ID and deduplicate, never send unchanged notices.
-Send a compact handoff with assignment identity, evidence and unresolved work.
+Return one terminal result per execution: completed with acceptance evidence,
+failed with evidence after ordinary authorized recovery, or blocked/decision-needed
+with the exact missing dependency/authority. No progress, ACK, separate dependency/
+ownership-release or frozen-head correction messages. An unchanged blocker is not
+a new result. Urgent safety/cancellation and required native permission/input gates
+are immediate exceptions; obey host notifications. Persist explicit pause safely.
+Send one compact handoff with assignment identity, revision and unresolved work.
 Stop after the return. Do not choose a new phase or delegate further.
+Resume the same assignment only on the parent's concrete changed-state instruction;
+then a new terminal result is legitimate, not a duplicate of the previous block.
 ```
 
 Do not invent a base branch or dependency to enable parallelism. If dependent work
@@ -58,7 +82,7 @@ A launch should not trigger a mandatory "skill loaded" acknowledgment. Put evide
 of loading in the child's first ledger event and final handoff; the parent checks
 it with the task evidence. Do not infer loading from a label or self-report alone.
 
-## Child: execute locally, report at a boundary
+## Child: execute locally, return a terminal result
 
 Persist the received contract, parent plan revision, failed hypotheses and any declared limits
 in your own snapshot. Keep the task's constraints/current context there across
@@ -70,17 +94,20 @@ permission request just to obey quiet mode. Tool waiting/notification rules win.
 | Working; useful progress | Append meaningful local evidence; continue within scope; no parent ping |
 | Healthy async operation | Keep its handle; obey notifications; no duplicate or synthetic status heartbeat |
 | Assignment complete | Verify done_when and all owned operations/dispositions; persist, read back, return once |
-| Blocked / needs decision | Persist result, exact obstacle, remaining budget, unresolved handles and one needed decision; return once, stop |
+| Failed after ordinary authorized recovery | Persist failure evidence, retry conditions and unresolved effects; return once, no unsafe retry |
+| Blocked / needs decision | Persist exact missing dependency/authority, declared limits, unresolved handles and one needed decision; return once, stop dependent work |
 | Explicit pause/cancel | Stop new work; record safe disposition and still-running operations; return once if needed |
-| New safety incident, urgent scope correction, required approval | Notify immediately using the required channel; do not wait for completion |
-| Shared dependency actually changed or an owned write boundary released | Record one change ID, before/after proof and affected consumers; notify only those whose next action changes |
+| New safety incident, urgent cancellation, required native permission/input | Notify immediately using the required channel; do not wait for completion |
+| Dependency changes or ownership is released | Record locally with before/after evidence; include in terminal result, or return blocked if it prevents completion |
+| Block resolved and parent explicitly resumes assignment | Preserve history/identity; execute authorized remainder and return a new terminal revision |
 
 Never create another child or restart an exhausted approach to escape a blocker.
 No acknowledgment-only response to a receipt or "stay parked" message. If the host
 forces a final reply, keep it minimal and do not also send the same result through
 a second channel. Runtime completion notifications may still arrive; do not promise
-to suppress them. An explicit status request can be answered once, briefly, without
-rerunning probes merely to refresh the answer.
+to suppress them. Do not use separate dependency notices, frozen-head correction
+broadcasts or status polling as a back door for intermediate reports. A required
+host reply does not justify a second message through the return channel.
 
 ## Reconcile approval before asking
 
@@ -91,8 +118,9 @@ task. Read the current user mandate and any relevant existing decision once.
    limits. Compare them with the scope actually authorized, including later
    narrowing/revocation. Before asking, identify the **new operation, resource or
    risk not covered**. A phase label is not a new effect.
-2. If covered, continue ordinary implementation, testing, bounded recovery and
-   delivery within that mandate without another executive release question.
+2. If covered, the executor continues ordinary implementation, testing, bounded
+   recovery and delivery without another executive release question; a coordinator
+   routes that work to its executor rather than performing it directly.
    An explicit end-to-end release can cover its named increment and target;
    a review-only request does not authorize edits or publication. General
    implementation never implies any merge, cloud operation or release. Approval
@@ -112,7 +140,9 @@ task. Read the current user mandate and any relevant existing decision once.
 5. A new material effect or target requires reconciliation, not permission copied
    from the nearest prior answer. Revocation/narrowing invalidates only affected
    authority: append a correction with provenance/reason, preserve history and
-   unaffected decisions. Notify only owners whose next action changes. An actual
+   unaffected decisions. The coordinator routes a concrete correction/resume/cancel
+   to affected owners; children keep intermediate deltas local unless a required
+   safety/input gate applies or they must return a terminal block. An actual
    new decision or changed constraint can justify one focused follow-up; elapsed
    time, user absence, a new session or paraphrasing cannot.
 
@@ -126,10 +156,13 @@ operation as an authorized retry to make a blocked assignment complete.
 
 ## Compact handoff
 
-One packet per changed terminal boundary, not a transcript. Aim for about 200 words
+One packet per assignment execution, not a transcript. An explicit resume after
+a resolved block permits a later terminal revision under the same assignment.
+Aim for about 200 words
 of narrative plus short evidence references. Include the exact assignment identity,
 child session/work/revision, parent plan revision and tested source/environment.
-State completion vs block vs decision vs pause. Include what was proven, acceptance
+State completed vs failed vs blocked/decision-required (or explicit pause/cancel).
+Include what was proven, acceptance
 criterion, artifact/commit and evidence pointers, outstanding operations, retry
 conditions and remaining work. Distinguish assignment completion from the overall
 user outcome; a tested helper is not a usable end-to-end delivery. Never omit a
@@ -169,6 +202,9 @@ The helper is read-only and sends nothing. Its `event_key` and revision identify
 the same packet on a repeat read. It validates shape, not delivery, truth, runtime
 skill loading, or acceptance. Native SQL users select the same fields from their
 current snapshot and follow the same reporting rules; no second database needed.
+For a failed execution, retain compatible `status: blocked` and state the failed
+outcome, evidence and no-retry condition in `summary`/`decision`/`blocker`; the
+parent records disposition `failed`. No new SQLite status or schema is needed.
 
 ## Ownership, blockers and evidence deltas
 
@@ -198,14 +234,13 @@ review the content/risk delta, not every unchanged file. A changed input invalid
 only affected proof and consumers, unless its dependency reach is uncertain.
 Record that uncertainty as a blocker rather than assuming independence.
 
-A dependency or ownership-release notice carries a stable `change_id`, affected
-scope/assignments and before/after evidence. Record it in an existing event kind
-(`progress` only with evidence, otherwise `observation`); send once only if another
-owner can act on it. The terminal-only CLI is not a notification sender: use the
-existing return channel for this compact exception, not `handoff` on working state.
-The parent records the accepted change ID and resulting action once. Duplicate or
-unchanged notices cause no message, new tests or reapplication. Reconcile stale
-versions before releasing dependencies. Ownership release is not new authorization.
+Retain dependency/ownership deltas locally in `coordination_change` for compatibility;
+this field is evidence, not permission to send an intermediate notice. Include it
+in the terminal result. The coordinator records accepted change IDs and resulting
+actions once; duplicate or unchanged results cause no message, tests or reapplication.
+Reconcile stale versions before releasing dependencies. Ownership release is not
+new authorization. If a dependency prevents completion, return one precise block
+and stop dependent work; the coordinator decides release, reassignment or resume.
 
 ## Parent: receive, verify, consolidate, then proceed
 
@@ -218,21 +253,25 @@ versions before releasing dependencies. Ownership release is not new authorizati
 3. Inspect only relevant referenced artifacts and acceptance evidence. Reuse prior
    accepted proof; recheck affected claims when inputs/context change or evidence
    is inconsistent. Keep an `evidence_delta` of reused/invalidated references and
-   reasons, not copied manifests. A child
-   commit in its worktree is not integrated into the parent's checkout. If needed,
-   integrate through the authorized workflow and run targeted checks before marking
-   it accepted. Missing/unreachable evidence means unverified, not success.
+   reasons, not copied manifests. A child commit is not integrated delivery.
+   When execution is needed, assign integration and targeted checks to an authorized
+   executor, preferably the existing suitable owner; never perform them in the
+   coordinator. Missing/unreachable evidence means unverified, not success.
 4. Append one parent event and complete updated snapshot. Keep a compact `children`
    array (optional state field) with assignment/handle, plan revision, last receipt,
-   disposition (`reported`, `accepted`, `blocked`, `superseded`), evidence reference
+   disposition (`reported`, `accepted`, `failed`, `blocked`, `superseded`), evidence reference
    and next dependency/decision. Preserve **all still-active child handles**, write
-   ownership, accepted change IDs, blocker scope, declared limits, retry conditions
+   ownership, execution role, accepted change IDs, blocker scope, declared limits, retry conditions
    and unresolved operations across compaction.
    Read back this write before starting dependent work or requesting compaction.
-5. Return no routine ACK. Send a follow-up only for a concrete missing fact,
-   changed assignment, cancellation or required decision. Reuse the existing child
-   rather than launch a replacement. Ask for one discriminating fact, not its full
-   transcript. Propagate changed scope promptly; silence never expands authority.
+5. Act once on the terminal disposition: route a concrete next assignment,
+   clarification of missing terminal evidence, resume or cancel, or ask the exact
+   missing user decision. Reuse a suitable existing executor. Do not wait for more
+   progress from a blocked/stopped child or poll it. Do not require the child to
+   wait for publication while the parent waits for that child's final result.
+   Return no routine ACK, manufacture no phase gate and do not repeat accepted
+   approvals. A resolved block resumes the same assignment with its history;
+   deduplicate later results by assignment and new receipt revision.
 
 Write the parent receipt before updating native todos if the tools cannot do both
 atomically. After interruption, reconcile from the persisted receipt and real

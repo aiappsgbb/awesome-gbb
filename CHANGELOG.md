@@ -50,6 +50,22 @@
   remain separate and unverified; see the
   [validation record](skills/gbb-pptx/references/last_validated.yaml).
 
+## Unreleased — progress-guard coordinator separation
+
+- `progress-guard` MAJOR **1.4.0 → 2.0.0**: intentionally replace the prior
+  coordinator-executed integration and intermediate dependency-notice allowances.
+  Coordinators route execution to authorized owners, consume terminal evidence
+  and consolidate; solo work stays direct. Explicit role transitions reconcile
+  live ownership.
+- One terminal result per assignment execution, with a new terminal revision
+  after a genuinely resumed block. No unchanged blockers, progress/ACK loops,
+  separate change notices or publication wait circles. Safety, native gates,
+  approval reconciliation and scoped UNKNOWN fences remain intact.
+- Optional role persistence preserves SQLite schema 1 and prior records.
+  Eight additional local regression cases are not observed agent compliance.
+  This is a source contract update, not a catalog-wide release or observed
+  behavioral certification.
+
 ## Unreleased — progress-guard approval reconciliation
 
 - `progress-guard` MINOR **1.3.0 → 1.4.0**: reconcile the current mandate and

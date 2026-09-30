@@ -29,7 +29,7 @@ class HandoffTests(unittest.TestCase):
             "context": "commit-a; local environment",
             "verified": [{"result": "Parser passes", "evidence": "test-output.txt"}],
             "blocker": "none",
-            "next_action": "Parent verifies and integrates commit-a",
+            "next_action": "Coordinator accepts evidence and assigns integration",
             "abandon_if": "Do not retry without changed failing input",
             "avoid": [{"attempt": "retry unchanged input", "retry_only_if": "input changes"}],
             "pending_operations": [],
@@ -94,6 +94,11 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(before, self.db.read_bytes())
 
     def test_working_or_waiting_cannot_emit_progress_ping(self):
+        self.state["coordination_change"] = {
+            "change_id": "schema-a-to-b", "kind": "dependency_changed",
+            "scope": ["schema"], "before": "version-a", "after": "version-b",
+            "affected_assignments": ["parser"],
+        }
         self.append()
         for revision, status in enumerate(("working", "waiting"), start=2):
             self.state["status"] = status
@@ -202,7 +207,7 @@ class HandoffTests(unittest.TestCase):
         }
         state = dict(self.state, status="working", children=[receipt],
                      plan_revision="parent-plan-2", goal="Integrate the parser",
-                     next_action="Verify and integrate child result")
+                     next_action="Review evidence and assign integration to executor")
         state.pop("delegation")
         event = {
             "work_id": "parent-task", "revision": 1,
@@ -235,7 +240,7 @@ class HandoffTests(unittest.TestCase):
         self.assertNotIn("assignment_scope", legacy)
         self.state["assignment_scope"] = {
             "outcome": "Parser passes",
-            "overall_outcome": "Import flow usable; parent integration pending",
+            "overall_outcome": "Import flow usable; executor integration pending",
             "write_scope": ["parser.py"], "shared_capacity": ["shared build runner"],
             "depends_on": [], "ordinary_operations": ["edit", "test"],
             "escalate_if": ["new permission or external effect"],
@@ -282,7 +287,7 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("Complete handoff requires", result.stderr)
 
-    def test_changed_notice_roundtrip_duplicate_and_unchanged_rejected(self):
+    def test_terminal_change_evidence_roundtrip_duplicate_and_unchanged_rejected(self):
         change = {
             "change_id": "parser-owner-a-released-v2", "kind": "ownership_released",
             "scope": ["parser.py"], "before": "owner-a writing v1",
@@ -392,7 +397,7 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(json.loads(self.report().stdout)["declared_limits"], [])
 
     def test_optional_fields_count_toward_output_cap_without_truncation(self):
-        self.state.update(status="blocked", blocker="Unknown outcome",
+        self.state.update(status="blocked", blocker="Unknown outcome", execution_role="executor",
                           blocker_scope={"blocks": ["target"],
                                          "does_not_block": ["docs"]},
                           evidence_delta={"reused": ["x" * 4096], "invalidated": []})
@@ -534,6 +539,90 @@ class HandoffTests(unittest.TestCase):
         recovered = self.run_cli("read", "--work", "child-task", "--recent", "0")
         self.assertEqual(json.loads(recovered.stdout)["state"]["approvals"],
                          self.state["approvals"])
+
+    def test_role_survives_snapshot_recovery_and_terminal_output_without_schema_change(self):
+        self.append()
+        self.assertNotIn("execution_role", json.loads(self.report().stdout))
+        for revision, role in enumerate(("executor", "coordinator"), 2):
+            self.state["execution_role"] = role
+            self.append(revision)
+            recovered = self.run_cli("read", "--work", "child-task", "--recent", "0")
+            self.assertEqual(json.loads(recovered.stdout)["state"]["execution_role"], role)
+            self.assertEqual(json.loads(self.report().stdout)["execution_role"], role)
+        with closing(sqlite3.connect(self.db)) as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 1)
+            original = json.loads(db.execute(
+                "SELECT state FROM progress_guard_events WHERE revision=1").fetchone()[0])
+            self.assertNotIn("execution_role", original)
+
+    def test_invalid_role_fails_without_changing_existing_snapshot(self):
+        self.append()
+        before = self.db.read_bytes()
+        for role in ("both", "", None, [], {"role": "executor"}):
+            self.state["execution_role"] = role
+            self.assertIn("execution_role", self.append(2, succeeds=False).stderr)
+            self.assertEqual(self.db.read_bytes(), before)
+
+    def test_scripted_block_resolution_resume_and_new_terminal_revision(self):
+        self.state.update(
+            execution_role="executor", status="blocked",
+            blocker="Schema owner has not released version-b",
+            next_action="Coordinator obtains schema release then explicitly resumes",
+        )
+        self.append(kind="blocked")
+        first = json.loads(self.report().stdout)
+        before = self.db.read_bytes()
+        self.assertEqual(first, json.loads(self.report().stdout))
+        self.assertEqual(self.db.read_bytes(), before)
+        parent_db = self.root / "parent.sqlite"
+        self.assertEqual(self.run_cli("init", db=parent_db).returncode, 0)
+        parent_state = dict(self.state, execution_role="coordinator", status="working",
+                            blocker="none", next_action="Resume same parser executor on version-b",
+                            children=[{"assignment_id": first["delegation"]["assignment_id"],
+                                       "last_receipt": first["event_key"], "revision": 1,
+                                       "disposition": "blocked",
+                                       "evidence": "schema-owner terminal release version-b"}])
+        parent_state.pop("delegation")
+        event = {
+            "work_id": "parent-task", "revision": 1, "event_key": "accept-block-and-resume",
+            "kind": "observation", "summary": "Block reconciled; resume assigned executor",
+            "evidence": "schema-owner release version-b",
+            "decision": "Resume parse-task-1; no new phase approval", "state": parent_state,
+        }
+        path = self.root / "parent-event.json"
+        path.write_text(json.dumps(event))
+        result = self.run_cli("append", "--event", str(path), db=parent_db)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        recovered = self.run_cli("read", "--work", "parent-task", "--recent", "0", db=parent_db)
+        self.assertEqual(json.loads(recovered.stdout)["state"], parent_state)
+        self.state.update(status="working", blocker="none",
+                          next_action="Execute remainder on released version-b")
+        self.append(2, kind="recovery", summary="Parent explicitly resumed after schema release")
+        self.assertNotEqual(self.report().returncode, 0)
+        self.state.update(status="complete", next_action="Coordinator accepts final evidence")
+        self.append(3)
+        final = json.loads(self.report().stdout)
+        self.assertEqual(first["delegation"], final["delegation"])
+        self.assertEqual((first["revision"], final["revision"]), (1, 3))
+        self.assertNotEqual(first["event_key"], final["event_key"])
+        self.assertEqual(json.loads(self.run_cli(
+            "read", "--work", "parent-task", "--recent", "0", db=parent_db
+        ).stdout)["state"]["children"][0]["revision"], 1)
+
+    def test_failed_execution_keeps_compatible_blocked_status_and_failure_evidence(self):
+        self.state.update(
+            execution_role="executor", status="blocked",
+            blocker="Failed: recovery exhausted; assertion still fails",
+            next_action="Coordinator records failed disposition and decides next action",
+            avoid=[{"attempt": "same parser input", "evidence": "assertion failure twice",
+                    "retry_only_if": "new input evidence or changed implementation mandate"}],
+        )
+        self.append(kind="blocked", summary="Failed after authorized recovery; no unsafe retry")
+        packet = json.loads(self.report().stdout)
+        self.assertEqual(packet["status"], "blocked")
+        self.assertIn("Failed", packet["summary"])
+        self.assertEqual(packet["avoid"], self.state["avoid"])
+        self.assertTrue(packet["evidence"])
 
 
 if __name__ == "__main__":
