@@ -63,7 +63,8 @@
   approval reconciliation and scoped UNKNOWN fences remain intact.
 - Optional role persistence preserves SQLite schema 1 and prior records.
   Eight additional local regression cases are not observed agent compliance.
-  This is unpublished source/local-install work, not a catalog release.
+  This is a source contract update, not a catalog-wide release or observed
+  behavioral certification.
 
 ## Unreleased — progress-guard approval reconciliation
 

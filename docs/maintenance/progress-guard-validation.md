@@ -1,6 +1,6 @@
 # Progress guard validation
 
-`progress-guard` 2.0.0 is an unpublished coordinator-contract candidate.
+`progress-guard` 2.0.0 is an unreleased coordinator-contract candidate.
 Source availability is not release approval or proof of agent behavior.
 
 ## Coordinator separation candidate
@@ -32,8 +32,10 @@ passed. The site was rebuilt; unrelated footer/freshness-age-only churn was excl
 from the focused diff. No Azure path changed or required live testing.
 
 The controlled coordinator trials in the scenario matrix remain unexecuted.
-An explicitly authorized personal installation of this candidate is unpublished;
-it is not a merged release or permission to retrofit active sessions. Exact
+Native loading of the complete personal 2.0.0 package succeeded on 2026-09-30;
+this does not certify plugin discovery, compaction or model compliance.
+A personal installation or upstream source merge is not a catalog-wide release
+or permission to retrofit active sessions. Exact
 installation hashes, backup and native-load outcome belong in private session
 evidence, not public machine inventory.
 

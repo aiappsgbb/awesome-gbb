@@ -3160,12 +3160,12 @@ of generated UI quality. Report, comparison/tool and informational-site output
 acceptance and native runtime loading remain promotion gates; see its
 [validation record](docs/maintenance/web-experience-design-validation.md).
 
-The `progress-guard` 2.0.0 entry is an unpublished follow-up candidate with forty-seven
+The `progress-guard` 2.0.0 entry is an unreleased follow-up candidate with forty-seven
 local persistence/output-selection/handoff/role/approval tests and two packaging
 tests wired into the catalog unit-test job. Coordinators route execution and accept
 terminal evidence; the additive role field preserves SQLite schema 1.
 Observed compaction/behavioral acceptance and
-native runtime loading remain pending; see its
+repository/plugin native runtime loading remain pending; see its
 [validation record](docs/maintenance/progress-guard-validation.md).
 It requires no Azure resources and installs no automatic supervision.
 
