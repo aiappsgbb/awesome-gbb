@@ -7,7 +7,7 @@ description: >
   real progress, or maintaining an execution ledger. DO NOT USE FOR: straightforward
   short tasks, autonomous supervision, or interrupting in-flight tool calls.
 metadata:
-  version: "1.4.0"
+  version: "2.0.0"
 ---
 
 # Progress guard
@@ -176,6 +176,19 @@ tool. Stop only known owned processes when safe/authorized; do not cancel a clou
 mutation just because a timer elapsed.
 
 Before authorized delegation, follow [the child-session contract](references/children.md).
+Persist the session's role in the existing snapshot: **coordinator** or **executor**.
+A coordinator assigns end-to-end work, routes dependencies/decisions, reads terminal
+acceptance evidence and maintains one consolidated ledger. It does not implement,
+build/test, deeply debug, integrate/merge source or deploy deliverables itself.
+Route direct-work requests to an existing suitable authorized executor; create
+another only for a real ownership need. Execution of integration, verification or
+publication belongs to an authorized executor, not the coordinator. Reading final
+evidence and recording acceptance is coordination, not executing the checks.
+Role changes must be explicit and reconcile live child ownership first; compaction
+or a new direct request does not silently switch roles. Ordinary solo work stays
+direct; loading this skill never requires a child. Preserve explicit one-process
+end-to-end constraints rather than delegating around them.
+
 The kickoff MUST explicitly require the child to load this skill and maintain its
 own ledger; do not assume skill/context inheritance. Give one bounded assignment
 with an end-to-end outcome, write ownership, dependencies, ordinary authorized
@@ -188,17 +201,23 @@ not all work that uses the same service. A blocker states what it blocks and wha
 it does not block. UNKNOWN fences the effect and anything that could interfere
 with reconciliation; demonstrably independent authorized work may continue.
 
-Children record intermediate progress locally. Return one compact handoff only
-when the assignment is complete, blocked, needs a decision, or is explicitly paused.
+Children record intermediate progress locally. Return one terminal result per
+assignment execution: completed with acceptance evidence, failed with evidence and
+no unsafe retry, or blocked/decision-required with the exact missing dependency or
+authority. Do ordinary recovery within the mandate before declaring failure.
 No unsolicited progress pings, acknowledgment chains or repeated unchanged blockers.
 Safety incidents, urgent cancellation and required permission/input gates are
 immediate exceptions; host-generated notifications cannot be suppressed by a skill.
-One changed-dependency or ownership-release notice may go to affected consumers
-when it changes their next action; persist/deduplicate it, never turn it into a
-heartbeat. This is not a second completion report or an automatic scheduler.
+No separate dependency-change, ownership-release or frozen-head correction notices:
+keep them local until the terminal result. A dependency that prevents completion
+requires one blocked result and stopped dependent work, not an intermediate ping.
+After the parent resolves a block and explicitly resumes the same assignment, a
+new terminal result is legitimate; deduplicate by assignment and receipt revision.
 
-The parent deduplicates returns, verifies evidence, and records accepted results
-or a precise blocker in its own ledger before dependent work or compaction.
+The coordinator reconciles each terminal result once and persists its accepted,
+failed or blocked disposition before routing the next assignment or missing
+decision. Do not wait for progress from a child that returned blocked/stopped, poll
+for status, or create parent/child publication wait circles or routine phase gates.
 Child completion is not parent acceptance or overall completion. Do not share
 one writable snapshot, forward transcripts, or create children merely for this skill.
 

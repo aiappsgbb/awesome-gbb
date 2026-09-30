@@ -41,6 +41,12 @@ review; do not disable tools or rewrite global instructions automatically.
 For delegated work, first apply [children.md](children.md): reconcile returned
 results into the parent's ledger without forwarding transcripts. Keep active child
 handles, dependency gates, ownership and unaccepted receipts in the latest snapshot.
+Preserve `execution_role`: a coordinator resumes coordination, not direct
+implementation/test/integration/deployment. Reconcile an explicit role change
+against live child ownership first; a solo executor does not create children.
+Keep terminal receipt revisions/dispositions and the next concrete routing decision.
+A blocked/stopped child is not working toward another report until explicitly
+resumed on changed facts. Do not poll it or resend an unchanged blocker on recovery.
 Preserve blocker `blocks`/`does_not_block` boundaries, any declared limits,
 accepted change IDs and the affected evidence delta, not copies of unchanged proofs.
 Preserve approval decision IDs, exact operation/target/effect, source references
@@ -86,7 +92,8 @@ After completion (or when recovering from an automatic compaction):
 
    Resolve `SKILL_ROOT` and `SESSION` as in [storage.md](storage.md).
    With native SQL, query `progress_guard_current` for that work ID only.
-2. Check current user intent, actual branch/commit and working-tree changes,
+2. Restore the role and ownership before the next action. Check current user
+   intent, actual branch/commit and working-tree changes,
    plan revision, and unresolved operations through their supported read paths.
    Preserve failed attempts and active-work accounting; offline/user waiting
    time is not active effort. A summary never overrides newer user instructions.

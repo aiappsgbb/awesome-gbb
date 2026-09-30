@@ -3160,8 +3160,10 @@ of generated UI quality. Report, comparison/tool and informational-site output
 acceptance and native runtime loading remain promotion gates; see its
 [validation record](docs/maintenance/web-experience-design-validation.md).
 
-The `progress-guard` entry is a follow-up candidate with thirty-nine local persistence/
-output-selection/handoff/scale-out/approval tests and two packaging tests wired into the catalog unit-test job.
+The `progress-guard` 2.0.0 entry is an unpublished follow-up candidate with forty-seven
+local persistence/output-selection/handoff/role/approval tests and two packaging
+tests wired into the catalog unit-test job. Coordinators route execution and accept
+terminal evidence; the additive role field preserves SQLite schema 1.
 Observed compaction/behavioral acceptance and
 native runtime loading remain pending; see its
 [validation record](docs/maintenance/progress-guard-validation.md).

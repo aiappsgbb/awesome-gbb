@@ -1,9 +1,43 @@
 # Progress guard validation
 
-`progress-guard` 1.4.0 is a follow-up candidate to the source merged in PR #521.
+`progress-guard` 2.0.0 is an unpublished coordinator-contract candidate.
 Source availability is not release approval or proof of agent behavior.
 
-## Approval reconciliation candidate
+## Coordinator separation candidate
+
+Version 2 intentionally changes the prior orchestration contract: a coordinator
+routes implementation, executable checks, integration and deployment to authorized
+executors rather than doing that work itself. It reads final evidence and keeps
+the consolidated ledger. Solo work stays direct; an explicit role transition
+reconciles child ownership before execution resumes.
+
+Children return one terminal result per assignment execution: completed, failed,
+or blocked/decision-required. Ordinary recovery stays inside the mandate.
+Intermediate dependency/ownership/head changes stay local, not separate notices.
+A genuine block is terminal until the parent resolves it and explicitly resumes
+the same assignment, allowing a later deduplicated terminal revision. Safety,
+cancellation and required native permission/input gates remain immediate exceptions.
+The coordinator records accepted/failed/blocked disposition and routes the concrete
+next action, not progress polls or routine publication phase gates.
+
+Eight added cases cover optional role persistence/shape, legacy records and schema
+1 compatibility, scripted block/resume receipts, compatible failed packets and
+static contract clauses. There are **49 ProgressGuard contract cases** (47 bundled
+and two packaging). These are local data/wording checks, not observed coordinator
+behavior, native compaction or model-compliance evidence.
+
+Local validation on 2026-09-30: all 49 contract cases and three site-preservation
+regressions passed; catalog lint, plugin integrity and generated-site link checks
+passed. The site was rebuilt; unrelated footer/freshness-age-only churn was excluded
+from the focused diff. No Azure path changed or required live testing.
+
+The controlled coordinator trials in the scenario matrix remain unexecuted.
+An explicitly authorized personal installation of this candidate is unpublished;
+it is not a merged release or permission to retrofit active sessions. Exact
+installation hashes, backup and native-load outcome belong in private session
+evidence, not public machine inventory.
+
+## Prior 1.4.0 approval reconciliation
 
 Before asking approval, compare the current user mandate with the exact operation,
 target/increment and material effect. Covered ordinary work proceeds; an uncovered
@@ -26,7 +60,7 @@ expected actions. These have **not been executed as observed agent trials**;
 no native compaction or model evaluation is claimed. Source and CI evidence for
 this candidate belong in its PR, separately from historical results below.
 
-## Scale-out contract candidate
+## Prior 1.3.0 scale-out contract
 
 The additive 1.3.0 contract assigns end-to-end outcomes with explicit write
 ownership, ordinary authorized operations, true dependencies and escalation
@@ -38,8 +72,8 @@ Optional `assignment_scope`, `declared_limits`, `blocker_scope`, `evidence_delta
 and `coordination_change` fields use the existing JSON state/schema. The helper
 checks declared shape and simple contradictions, preserves them in the existing
 4 KiB terminal packet and never sends notifications or schedules operations.
-One actionable dependency-change/ownership-release notice is an instruction-level
-exception to quiet intermediate work, not a new working-state `handoff` command.
+The prior actionable dependency-change/ownership-release notice exception is
+removed in 2.0.0. Its evidence field remains compatible and terminal-only.
 
 Ten new deterministic tests exercise scripted sibling records, conflict blocking,
 duplicate/unchanged receipts, affected proof deltas, same-assignment effect-free
