@@ -1,7 +1,7 @@
 # Progress guard validation
 
-`progress-guard` 2.1.0 is an uninstalled local simplification candidate.
-Source availability is not release approval or proof of agent behavior.
+`progress-guard` 2.1.0 has approved source publication and local package
+synchronization. Source availability is not proof of agent behavior.
 
 ## Compact protocol candidate
 
@@ -23,17 +23,23 @@ Five additional cases cover stdin/file compatibility and failure atomicity,
 task-only kickoffs, selective acceptance and snapshot boundaries. The resulting
 54 contract cases comprise 52 bundled tests and two catalog packaging cases.
 These are executable data tests and static wording checks, not observed behavior.
-The next-real-task criteria in scenarios.md have not been started; installation
-and global-instruction preview approval must precede any trial. No private global
-instructions are included in the source or validation record. Publication remains
-deferred pending actual behavior evidence and user authority.
+The next-real-task criteria in scenarios.md have not been started. No private
+global instructions are included in the source or validation record. On
+2026-10-01, the owner explicitly authorized source publication followed by
+supported local package synchronization without waiting for that trial.
+This changes the delivery gate, not the evidence: observed behavior remains
+untested.
 
 Local validation on 2026-10-01: all 54 contract/packaging cases passed; catalog
 lint, plugin structure and generated-site link validation passed. The four
 runtime guidance files were reduced from 55,923 to 34,284 UTF-8 bytes
 (7,602 to 4,358 whitespace-separated words). This is a measured text reduction,
-not a token, latency or model-quality result. Personal installation remains 2.0.0
-pending exact preview approval.
+not a token, latency or model-quality result. The approved personal 2.1.0
+installation matched the complete eleven-file source manifest and passed all
+52 bundled tests. Native CLI discovery selected that personal copy; an existing
+session's native skill/global adoption was not established. Managed plugin
+synchronization follows accepted upstream availability, with complete payload
+parity and runtime discovery checked separately from version labels.
 
 ## Coordinator separation candidate
 

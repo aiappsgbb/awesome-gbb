@@ -59,8 +59,9 @@
   transactional validation. Successful append receipts need no automatic full
   readback. Acceptance uses sufficient relevant proof and targeted clarification,
   not duplicate executor work. Kickoffs carry task context plus a skill reference.
-- Local source candidate only; installation, observed real-task acceptance and
-  upstream publication remain separate approval/evidence gates.
+- Source publication and local package synchronization are approved separately
+  from observed real-task acceptance, which remains untested. Scripted tests
+  and installation do not certify agent behavior or active-session adoption.
 
 ## Unreleased — progress-guard coordinator separation
 
