@@ -1,5 +1,5 @@
 # Freshness tier C: original protocol and standard-library persistence helper.
-last_validated: "2026-09-30"
+last_validated: "2026-10-01"
 validated_by: copilot
 validation_notes: |
   Local persistence tests and catalog checks are recorded separately from
@@ -17,4 +17,6 @@ validation_notes: |
   Coordinator roles and terminal-only routing have static contract and scripted
   persistence coverage, not observed model compliance or message suppression.
   Version 2 preserves schema 1 and existing approval/coordination evidence fields.
+  Version 2.1 consolidates guidance and adds optional stdin append with the same
+  validation/transaction/receipt; simplified real-task behavior remains unobserved.
   No Azure connection, deployment, external service, hooks or watchers required.

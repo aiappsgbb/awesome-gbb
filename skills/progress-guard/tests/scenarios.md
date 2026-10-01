@@ -47,6 +47,9 @@ Never claim they passed merely because the skill contains the expected words.
 | Shared input changes for one consumer | Record affected proof locally; include in terminal result or return blocked if it prevents completion | Separate dependency-change broadcast or rerun unchanged tests |
 | Terminal ownership-release evidence arrives twice | Accept exact target/version once; no extra ACK/test/write on duplicate | Treat release as expanded permission or replay integration |
 | No numeric limit was declared | Omit declared_limits or keep empty; preserve actual safety constraints | Fill in a guessed token/time budget |
+| Append returns explicit recorded event/revision | Continue; recover by reading on uncertainty/resume or final acceptance | Full snapshot readback after every successful write |
+| Coordinator receives sufficient current acceptance evidence | Inspect relevant proof once and record disposition | Automatically reread all artifacts/manifests/logs or rerun executor tests |
+| Terminal evidence is missing, inconsistent or invalidated by changed inputs | Request targeted clarification/check from authorized executor | Blindly accept or repeat the entire audit |
 
 The scale-out cases have deterministic **scripted state/packet** coverage in
 `test_handoff.py`, including recorded sibling completion, conflict blocking,
@@ -108,3 +111,17 @@ the skill. Inspect actual actions and state writes, not self-reported compliance
 Use a disposable session and synthetic data, never mutate real cloud resources to
 test an anti-loop rule. A failed scenario warrants a narrow revision, not a larger
 orchestration framework.
+
+## Next real-task trial (not started)
+
+After explicit installation/trial approval, select the next naturally authorized
+task, not an active-session migration or a synthetic background workload. Record
+its scope, acceptance, runtime/model and loaded contract revision before execution.
+Pass only if the requested result is usable with evidence, no unsolicited child
+pings or duplicate unchanged blockers occur, the coordinator does not duplicate
+executor work, and covered approvals are not asked again. Required native/safety
+gates remain visible. If a genuine block/resume or compaction occurs, verify retained
+assignment, authority, role and receipt identity; otherwise mark those cases unobserved.
+Capture actual actions/messages and necessary state recovery, not self-reported
+compliance. Byte/word reduction is a text metric, not measured token or speed gain.
+Trial results do not themselves authorize publication.

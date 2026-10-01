@@ -1,30 +1,18 @@
 # One source of execution state
 
-Prefer the **session SQL tool** if it supports SQLite tables/views/triggers.
-Read [ledger.sql](ledger.sql) in this directory and execute its complete schema with that tool
-once. Do not recreate or modify native `todos` / `todo_deps`. Use existing todo IDs
-as work_id where possible. Do not open or mutate the runtime's internal database files.
-If a same-named schema already exists but differs, stop and report a version conflict.
+Choose one store: native session SQL if it supports the complete
+[schema](ledger.sql), otherwise the bundled standard-library SQLite helper in the
+actual session's private `files/progress-guard.sqlite`. Reuse existing work/todo IDs;
+never mutate runtime databases or recreate native todos. Different existing schema:
+stop with a version conflict. No duplicate writable snapshot.
 
-If session SQL is unavailable or cannot support this schema, use **the same schema**
-in `<actual-session-folder>/files/progress-guard.sqlite` via Python's standard-library
-sqlite3. Discover the real session path; never copy a path from another session.
-No package installation needed. Use parameterized SQL, a transaction for inserts,
-a finite connection timeout and an owner-private directory.
+Trigger-body "incomplete input" means unsupported native SQL: switch once to the
+fallback, not relaxed constraints. Clean only confirmed empty objects from your
+failed initialization; never delete existing history. If neither store works,
+disclose degraded persistence and use the existing plan/checkpoint.
 
-Choose once. No duplicate writable JSON/Markdown snapshot. If neither store is usable,
-report degraded persistence and keep the existing plan/checkpoint; do not stall the
-task while constructing a new storage system. The recovery/stop rules still apply.
-
-Some SQL tools split statements at semicolons and reject SQLite trigger bodies
-with "incomplete input". This is a capability failure, not a reason to remove the
-consistency checks or repeatedly retry. Switch once to the bundled fallback.
-If setup partially created an empty table, confirm it is empty before cleaning up
-only those newly created objects. Never drop an existing ledger containing events.
-
-Fallback commands: set `SKILL_ROOT` to this skill's actual loaded directory (the
-directory containing `SKILL.md`) and `SESSION` to the actual session folder.
-Do not assume a user-scope installation; repository and plugin installations work too.
+Set `SKILL_ROOT` to the actually loaded package directory and `SESSION` to this
+session's real folder, not an assumed user installation or another session's path:
 
 ```bash
 python3 "$SKILL_ROOT/scripts/ledger.py" \
@@ -35,33 +23,23 @@ python3 "$SKILL_ROOT/scripts/ledger.py" \
   --db "$SESSION/files/progress-guard.sqlite" read --work EXISTING-TODO-ID --recent 0
 ```
 
-Use `--recent 0` for snapshot-only recovery. Omitting `--recent` preserves the
-default six-event history; request `--recent 1` through `--recent 6` only when
-those events answer a specific missing-context question. This selects output,
-not a runtime compaction, and does not delete ledger history.
+`append --event -` reads the same JSON from stdin, avoiding staging files:
+pipe a complete event from the caller or use a quoted heredoc. The file form
+remains supported; staging inputs are not another state store and can be removed
+after confirmed append. Neither form requires an append/read/delete ceremony.
+Input fields: work_id, revision, event_key, kind, summary, evidence, decision,
+state (object). The transactional receipt reports recorded event/revision;
+explicit failure does not advance it. If the call's outcome is uncertain, read
+current state before retrying. Use this CLI for the fallback store, not parallel SQL.
 
-Delegated work also uses the [child-session contract](children.md). The optional
-`handoff --work CHILD-WORK-ID` command emits a bounded terminal packet, not the
-full snapshot/history, and sends no messages. A `delegation` object in the child's
-state binds the assignment; the parent's optional `children` array tracks receipts,
-active handles and acceptance. These are additive state fields, not new tables
-or a replacement plan. Existing non-delegated ledgers remain valid.
-Persist `execution_role` (`coordinator` or `executor`) when coordinating or assigned
-work; absence in older/solo records does not create delegation or imply a role
-change. Restore the role and ownership before acting after compaction. The helper
-checks the value and includes it in terminal output, not enforcement of actions.
-Failed executions use existing `status: blocked` with explicit failed evidence
-and retry conditions in `summary`/`decision`/`blocker`; parent disposition is
-`failed`. Working/waiting snapshots cannot emit a handoff. Repeated reads return
-the same receipt, not authorization to send it again. A resolved-block resume
-keeps assignment identity and allows a later terminal revision.
-Optional coordination fields below also survive terminal `handoff` output; the
-same 4 KiB cap applies to the entire packet. Absence adds no defaults or budget.
-
-The staging JSON requires work_id, revision, event_key, kind, summary, evidence,
-decision, and state (a JSON object). It is an input, not a second authoritative
-snapshot; remove it after a verified append. Errors are explicit and do not advance
-the revision. Read/create/use this store through the CLI, not a separate SQL tool.
+`read --recent 0` returns snapshot only; omitted means six recent events,
+1-6 requests bounded history. Selection is not compaction or history deletion.
+`handoff` renders a terminal packet under [children.md](children.md), sends nothing
+and returns the same receipt, not authorization to send it again.
+Optional fields below are additive JSON, not new tables; legacy/solo records work.
+`execution_role` accepts coordinator/executor and passes through to handoff;
+absence grants no role change. Failed packets retain `status: blocked`.
+These shape checks do not enforce actions or truth.
 
 ## Snapshot
 
@@ -136,34 +114,19 @@ the no-progress thresholds or an inherited template.
 }
 ```
 
-Each listed object requires its shown keys when present: text values are nonempty
-strings; list values contain nonempty strings (empty lists are permitted).
-`declared_limits` contains only actual constraints with their authority/source,
-for example `"user instruction: no cloud writes"`, not guessed quotas.
-Evidence entries include immutable references and a reuse/invalidation reason.
-For `ownership_released`, before/after identify the owner, exact target/version
-and disposition; releasing a target does not grant new authority. Keep these
-deltas local until the terminal result; `coordination_change` is retained evidence,
-not an intermediate-notice exception. A true blocking dependency warrants one
-terminal block and stopped dependent work, not a separate change message.
+Present objects require the shown keys: nonempty text or lists of nonempty strings
+(empty lists allowed). `declared_limits` records actual constraints/source, never
+guessed quotas. Evidence deltas use immutable pointers and reuse/invalidation reasons.
+Ownership deltas name owner, exact target/version and disposition.
+`coordination_change` remains terminal evidence, not an intermediate-notice exception.
 
-The helper validates these shapes on append and handoff. It rejects identical
-literal scopes in both blocker lists and a change with equal before/after,
-unknown kind, empty scope or empty affected-consumer list. It preserves all
-present fields in the bounded terminal packet. The SQLite schema is unchanged:
-native SQL callers follow the same contract, but do not inherit CLI-only checks.
-A complete handoff also requires an empty `blocker_scope.blocks` when present;
-clearing the prose blocker alone cannot hide a still-declared write conflict.
-
-These are consistency checks, not proof of path aliasing, cloud write exclusion,
-permission, actual change, correct invalidation or independence. Human/agent owners
-still verify those facts. The helper neither schedules work nor sends notices,
-deduplicates cross-session delivery, times out builds, or replays operations.
-Record the coordinator's accepted terminal `change_id` in its existing receipt before acting;
-an unchanged/duplicate receipt has no new action. UNKNOWN and live ownership remain
-in `pending_operations`/the scope record across compaction even when other work
-completes. Shorten evidence pointers if a terminal packet exceeds 4 KiB; never drop
-the blocked scope or unresolved handle to make it fit.
+Append/handoff reject equal blocked/independent literal scopes, equal before/after,
+unknown change kinds and empty changed scopes/consumers. Complete packets require
+empty blocker scope, no unresolved operations and compatible completion evidence.
+All present fields share the 4 KiB packet cap; shorten pointers, not safety facts.
+SQLite schema is unchanged; native SQL does not inherit CLI-only checks.
+These checks cannot prove aliasing, independence, permission or evidence truth.
+They neither schedule/replay work nor deduplicate actual message delivery.
 
 ## Optional approval records
 
@@ -189,25 +152,14 @@ the same 4 KiB cap; absent/empty records remain valid.
 }
 ```
 
-All fields are nonempty strings; `result` is `authorized`, `pending`,
-`unavailable`, `denied` or `revoked`. For an explicit mandate that already covers
-the operation, `request_ref` points to that user instruction, not an invented
-additional question. `evidence` references the actual answer or tool outcome,
-not an assistant's belief. Record narrowing/revocation by appending an event
-with an updated snapshot; old events retain the prior scope and answer.
-
-Decision IDs and literal `(operation, target, effect)` tuples must each be unique
-within a snapshot. Reuse the ID for paraphrased requests about unchanged scope;
-use a different scoped record for a different target/increment. The helper checks
-shape and duplicate declared identities only. It does not interpret natural
-language, resolve aliases, verify user identity, infer coverage, enforce
-transitions or issue permission. Native SQL callers follow the same contract but
-do not inherit CLI-only checks. `read` remains an unchanged recovery path.
-
-Pending/unavailable/denied/revoked decisions still needed for this assignment
-belong in `blocker`/`blocker_scope`; retain unrelated records without globally
-blocking authorized work. Keep UNKNOWN in `pending_operations` regardless of
-approval status. Missing records are missing evidence, never implied permission.
+Fields are nonempty strings; result is authorized/pending/unavailable/denied/revoked.
+Decision IDs and literal operation/target/effect tuples must be unique.
+Request/evidence references point to the actual mandate/answer/tool outcome, not
+an invented question or assistant belief. Optional records pass through terminal
+handoffs under the same cap; absent/empty records stay compatible.
+Use [approval reconciliation](children.md#reconcile-approval-before-asking) for
+decisions, blocked scope and retained UNKNOWN. The helper checks declared shape/
+duplicates, not semantic coverage, aliases, identity, transitions or permission.
 When the packet exceeds its cap, shorten references without dropping unanswered
 decisions or safety boundaries. See [reconciliation](children.md#reconcile-approval-before-asking).
 

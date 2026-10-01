@@ -127,7 +127,7 @@ def main():
     parser.add_argument("--db", required=True, type=Path)
     parser.add_argument("action", choices=("init", "read", "append", "handoff"))
     parser.add_argument("--work")
-    parser.add_argument("--event", type=Path, help="JSON file with all event fields")
+    parser.add_argument("--event", help="JSON file with all event fields, or - for stdin")
     parser.add_argument("--recent", type=int, default=None,
                         help="read: include 0-6 recent events (default 6; 0 for snapshot only)")
     args = parser.parse_args()
@@ -174,7 +174,8 @@ def main():
                 )]
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
-            event = json.loads(args.event.read_text())
+            event = json.loads(sys.stdin.read() if args.event == "-"
+                               else Path(args.event).read_text())
             if not isinstance(event, dict) or set(event) != set(FIELDS):
                 raise ValueError("Event requires exactly: " + ", ".join(FIELDS))
             if not isinstance(event["state"], dict):
