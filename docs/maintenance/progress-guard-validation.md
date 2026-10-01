@@ -1,7 +1,39 @@
 # Progress guard validation
 
-`progress-guard` 2.0.0 is an unreleased coordinator-contract candidate.
+`progress-guard` 2.1.0 is an uninstalled local simplification candidate.
 Source availability is not release approval or proof of agent behavior.
+
+## Compact protocol candidate
+
+The core recovery/evidence rules live in SKILL.md; assignment, approval and
+terminal acceptance details live in children.md. Kickoffs carry task-specific
+context and a short skill reference rather than repeating the protocol.
+Compaction/storage guidance refers to those rules instead of restating them.
+Coordinator-only execution, genuine block/resume, terminal deduplication,
+native/safety gates, scoped UNKNOWN, independent work and prior evidence remain.
+
+Successful append confirmation no longer requires a full readback on every write.
+Recovery, uncertain persistence, changed inputs and final acceptance still require
+current state. Optional `append --event -` accepts complete JSON through stdin,
+retaining file input, schema 1 and the same transaction/validation/receipt.
+Coordinator acceptance inspects sufficient relevant proof; missing/inconsistent
+claims need targeted clarification, not blind trust or duplicate execution.
+
+Five additional cases cover stdin/file compatibility and failure atomicity,
+task-only kickoffs, selective acceptance and snapshot boundaries. The resulting
+54 contract cases comprise 52 bundled tests and two catalog packaging cases.
+These are executable data tests and static wording checks, not observed behavior.
+The next-real-task criteria in scenarios.md have not been started; installation
+and global-instruction preview approval must precede any trial. No private global
+instructions are included in the source or validation record. Publication remains
+deferred pending actual behavior evidence and user authority.
+
+Local validation on 2026-10-01: all 54 contract/packaging cases passed; catalog
+lint, plugin structure and generated-site link validation passed. The four
+runtime guidance files were reduced from 55,923 to 34,284 UTF-8 bytes
+(7,602 to 4,358 whitespace-separated words). This is a measured text reduction,
+not a token, latency or model-quality result. Personal installation remains 2.0.0
+pending exact preview approval.
 
 ## Coordinator separation candidate
 

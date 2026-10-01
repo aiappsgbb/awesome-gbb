@@ -50,6 +50,18 @@
   remain separate and unverified; see the
   [validation record](skills/gbb-pptx/references/last_validated.yaml).
 
+## Unreleased — progress-guard compact protocol
+
+- `progress-guard` MINOR **2.0.0 → 2.1.0**: consolidate repeated execution and
+  child instructions without changing coordinator-only execution, terminal
+  receipts, scoped approval/UNKNOWN or schema 1 contracts.
+- Add optional `append --event -` for stdin JSON; preserve file input and
+  transactional validation. Successful append receipts need no automatic full
+  readback. Acceptance uses sufficient relevant proof and targeted clarification,
+  not duplicate executor work. Kickoffs carry task context plus a skill reference.
+- Local source candidate only; installation, observed real-task acceptance and
+  upstream publication remain separate approval/evidence gates.
+
 ## Unreleased — progress-guard coordinator separation
 
 - `progress-guard` MAJOR **1.4.0 → 2.0.0**: intentionally replace the prior

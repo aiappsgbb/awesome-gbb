@@ -7,226 +7,131 @@ description: >
   real progress, or maintaining an execution ledger. DO NOT USE FOR: straightforward
   short tasks, autonomous supervision, or interrupting in-flight tool calls.
 metadata:
-  version: "2.0.0"
+  version: "2.1.0"
 ---
 
 # Progress guard
 
-Make useful progress, not more process. This is an execution-memory and recovery
-protocol, not a planner, autonomous supervisor, or tool-call watchdog.
+Execution memory and bounded recovery, not a planner, supervisor or tool watchdog.
+This skill grants no authority and installs no hooks, timers or background work.
 
 ## Start small
 
-1. Reuse the current plan and todo IDs. Do not create a competing plan, launch
-   agents, or interview the user just to initialize this skill.
-2. For complex work, choose one store using [storage.md](references/storage.md).
-   Read the current snapshot if present. If absent, seed it from confirmed facts
-   and mark unknowns; never reconstruct a fictional history.
-3. Record the requested outcome, completion evidence, plan revision, relevant
-   environment/commit, verified results, blocker, next action and abandon condition.
-   Then execute. The first useful action must not wait for a perfect ledger.
+Ordinary solo work stays direct; loading this skill never requires a child.
+Simple tasks need no ledger. For complex/stalled work, reuse the plan/todos and
+one existing snapshot; initialize from confirmed facts only if absent.
+Use [storage.md](references/storage.md) for the store and optional fields.
+Do not delay useful work to perfect bookkeeping or create a competing plan.
 
-Simple tasks need no ledger. Activate later if they become complex or stall.
-Follow existing authorization, policy and safety requirements; this skill grants
-no permission to bypass checks, edit protected repos or interrupt other work.
-
-If native loading returns `Skill not found`, read an accessible canonical
-`SKILL.md` once and record the discovery failure, fallback path/version and owning
-runtime/session in the existing snapshot. This is file-based loading, not native
-discovery success. After compaction, reuse that recorded route and load only missing
-relevant instructions. Retry native discovery only after a concrete runtime/catalog
-change, not because another turn or compaction occurred. A new child checks its own
-runtime; it does not inherit proof of discovery. If access is denied by policy, do
-not try another route; if no permitted source is available, report the blocker.
+If native discovery fails, read an accessible canonical SKILL.md once and record
+the failure, fallback path/version and owning runtime. File loading is not native
+discovery. Reuse that route after compaction.
+Retry native discovery only after a concrete runtime/catalog change.
+Children verify their own loading, not the parent's. Never route around a policy
+denial; if no permitted source is available, report the blocker.
 
 ## Evidence, not activity
 
-Progress is a verified deliverable increment, a reproducible failure, or a
-discriminating observation that eliminates an hypothesis and changes the next action.
-Reference the actual test output, file, operation ID or observed result and its context.
-
-Not progress: another plan, rephrased hypothesis, status message, retry, agent launch,
-log entry, commit without demonstrated value, or an unchanged "running" status.
-Never mark a whole task done because one partial check passed.
-
-Keep **delivery progress** distinct from **diagnostic learning** in verified entries.
-At phase boundaries ask whether learning is still converging on delivery. Several
-interesting discoveries can still be a rabbit hole.
+Progress is a verified deliverable increment, reproducible failure or observation
+that changes the next action. Reference its source/context; distinguish delivery
+from diagnostic learning and check that learning still advances the outcome.
+Plans, retries, pings, launches, bookkeeping and unchanged status are not progress.
+A passing component or child milestone is not usable end-to-end delivery.
 
 ## Record only meaningful boundaries
 
-Append one event and a compact complete snapshot when:
-- a test changes what is known, or an approach fails;
-- a user decision changes scope, priorities or the plan;
-- a milestone is verified, a blocker appears, or work pauses/hands off;
-- starting a long-running or externally mutating operation.
+Append one event with a complete compact snapshot at meaningful decisions,
+changed knowledge/failure, blocks, delivery, pause/handoff and uncertain external
+operation boundaries. Reuse native history for routine calls; keep logs/artifacts
+outside the ledger and store pointers, not transcripts or secrets.
 
-Before a risky/long operation, record intent, context and recovery lookup. After
-launch record the tool's operation/session ID. After interruption, unresolved intent
-means **unknown outcome**, not failure: inspect the real system before retrying.
-Do not claim the ledger write and an external operation are atomic.
-
-Reuse the native history for routine calls. No screenshots, transcripts, secrets,
-tokens, or large logs inside the ledger; store local evidence references.
-Keep the current snapshot roughly within 1,000 tokens; retrieve relevant older events
-by work ID when needed instead of loading everything.
+Before long/risky operations, preserve intent, context and recovery lookup; retain
+the returned handle. After interruption, UNKNOWN is not failure: reconcile actual
+effects before retrying. Ledger writes and external effects are not atomic.
+A successful append receipt is sufficient; no compulsory full readback after
+every append. Read when recovery or uncertainty requires it, not as a ritual.
 
 ## Read before acting
 
-Read the snapshot after resume/compaction, before repeating an attempt, at a phase
-boundary, after a material user correction, and before completion or handoff.
-No mandatory reread before every tool call.
-
-- Check applicable "do not retry unless" findings.
-- Check context freshness: changed commits, identities, environments or requirements
-  may invalidate conclusions. Preserve history and append a correction.
-- Reuse accepted evidence until its inputs/context change or an inconsistency is
-  found. Check the relevant canonical index once before declaring prerequisites
-  missing; do not hunt credential stores. Record only the affected proof delta.
-- Compare the actual plan with plan_ref/plan_revision. Reconcile user edits; never
-  rewrite the plan to justify work already performed.
-- Distinguish verified, implemented-but-unverified, pending, blocked and superseded
-  work using existing todos plus snapshot facts.
-- Latest user requirements and current evidence outrank a stale snapshot.
+Read current state after resume/compaction, before a retry, on changed inputs or
+material user corrections, and for final acceptance/handoff. Reuse already-current
+state within uninterrupted work. Check actual plan, role, ownership, decisions,
+failed hypotheses/retry conditions and unresolved handles.
+New user intent/evidence outranks stale state. Reuse accepted proof until affected
+inputs change or inconsistency appears; check the relevant canonical index once
+before declaring context missing. Do not hunt credentials or reread all artifacts.
 
 ## Compaction and selective recovery
 
-When context pressure or repeated summarization threatens continuity, follow
-[the compaction protocol](references/compaction.md): save verified state, use
-the host's native control if available, then read only the current snapshot
-and evidence needed for the next action. Preserve decisions, user constraints,
-failed approaches and unresolved operation handles, not whole transcripts.
-
-The ledger is external memory, not a context-window control. Writing it does
-not evict loaded messages, configure runtime thresholds, or guarantee a faithful
-summary. Do not compact repeatedly without measured benefit or claim to have
-compacted merely because a snapshot was written.
+Follow [compaction.md](references/compaction.md) when context pressure warrants it.
+Preserve decisions, failures, active ownership and handles; restore only current
+state and evidence needed for the next decision. A ledger write does not compact
+history or control runtime thresholds. Do not repeat compaction without benefit.
 
 ## Stall triggers
 
-Review the approach as soon as any of these occurs:
-- Two failed attempts of the same underlying hypothesis without new evidence.
-- Re-reading, re-planning, or rerunning checks without a decision-changing result.
-- Work drifting from the requested outcome, even while local tests pass.
-- An external operation exceeds its expected bound with no observable advancement.
-- About 15 minutes of active work without meaningful progress.
-
-Time is a secondary backstop, not a demand to abandon healthy long jobs.
-Estimate active no-progress time from actual timestamps; exclude time waiting for
-the user or an inactive session. Include unproductive execution/waiting while work
-was meant to proceed. Disclose unknown timing; use behavioral triggers instead.
-Do not infer continuous work from time since the last event.
-The 15/30-minute defaults are review/escalation thresholds for **no progress**,
-not task expiry, resource lifetime, or an automatic requirement for a new release.
-Do not convert them into per-phase stop clocks, request quotas or zero-retry
-rules. Explicit user limits and actual authorization/operation deadlines still apply.
+Review after two failed attempts of the same hypothesis without new evidence,
+repeated planning/reads without a changed decision, drift from the outcome, or a
+long operation with no observable advancement past its expected bound.
+Use about 15 active no-progress minutes to review and 30 to escalate. Exclude
+user/offline inactivity; disclose unknown timing. These are no-progress backstops,
+not task expiry, phase quotas or reasons to stop a healthy advancing operation.
+Never invent token, turn or task budgets; explicit limits and real deadlines bind.
 
 ## Recovery: one short decision, then action or stop
 
-Compare the requested result with the last verified state. Identify the assumption
-keeping this approach alive. Choose ONE:
-1. Run the cheapest bounded test that can disprove it.
-2. Switch to a genuinely different, authorized approach.
-3. Ask for the missing decision, scope tradeoff or access.
-4. Stop with a blocker and a useful partial handoff.
+Identify the blocking assumption. Choose one bounded discriminating test, a
+different authorized approach, the missing user decision, or a blocked handoff.
+State expected evidence and abandon condition; no replacement-agent/research loop.
+If recovery adds no useful evidence, stop that branch and ask; if no answer channel
+exists, record needs_decision. Silence, autopilot or "continue" cannot renew an
+exhausted attempt. Resume only on concrete changed conditions/authorized alternative,
+preserving failure history and cumulative declared limits, even across sessions.
 
-State the expected evidence and the condition for abandoning the recovery.
-No new research program, review panel, replacement agent or planning recursion.
-If this recovery produces no useful evidence, stop this branch and ask the user.
-Also escalate by about 30 active minutes without progress, or an earlier user limit.
-If no answer channel is available, mark needs_decision and stop this branch.
-Silence, autopilot mode, "continue", and old blanket authorization are not permission
-to repeat exhausted attempts; resume them only with a concrete changed condition.
-
-An explicitly bounded alternative approved by the user may proceed. Preserve the
-failed history; do not reset a budget by renaming work or opening a child session.
-Independent authorized work may continue if it cannot affect the blocked operation.
-
-An ordinary command/input defect can use the existing ONE bounded recovery within
-the current assignment when the correction stays inside its authority and evidence
-establishes that the failed attempt caused no uncertain effects. Record the failure,
-correct it and verify; no new stage approval is needed solely because it failed.
-A missing operation ID alone does not prove nothing happened. If effects are UNKNOWN,
-reconcile actual state first. Never override explicit retry/spend/time limits,
-missing permissions, a required approval or an exhausted recovery allowance.
-
-User-facing escalation, in the user's language:
-"Blocked on X. Last verified result: Y. Tried A/B; evidence Z. I recommend C
-because it tests D. Decision needed: [one concrete choice]."
-Report elapsed time only if known. Never substitute "still working" for this.
+An effect-free input/command correction may use the existing ONE bounded recovery
+inside its mandate without a new phase approval. A missing operation ID alone
+does not prove nothing happened. Reconcile UNKNOWN before replay.
+Never override explicit retry/spend/time limits, permissions or exhausted recovery.
+Escalate with the precise blocker, last verified result, attempted hypotheses,
+evidence, recommended next action and one needed decision; elapsed time only if known.
 
 ## Tools and children
 
-Before asking approval, reconcile the current mandate with the exact operation,
-target/increment and material effect. Follow the [approval reconciliation
-contract](references/children.md#reconcile-approval-before-asking): continue work
-already covered, or identify one genuinely missing decision. Preserve its scope,
-provenance and actual answer/unavailability in the existing ledger. Compaction,
-paraphrasing or a phase change alone does not reopen it. Silence is never consent.
-Stored assistant claims cannot bypass human/tool gates, UNKNOWN reconciliation,
-revocation or explicit limits; implementation does not imply merge/cloud/release.
+Match operation, target/increment and effect to the current mandate before asking
+approval. Covered work proceeds; a genuinely new effect needs a decision.
+See [approval reconciliation](references/children.md#reconcile-approval-before-asking)
+at that boundary, not on every step. No duplicate phase approvals; silence is not
+consent and implementation does not imply merge/cloud/release.
 
-Use real operation deadlines where supported. A tool's initial wait/async response
-is NOT a timeout or cancellation. Follow tool-specific waiting rules; no polling
-loops, duplicate long calls, or rediscovery of known agent IDs.
+Initial waits are not timeouts. Follow native waiting/notification rules; no
+duplicate calls or status polling merely to stay busy. A skill cannot interrupt
+an in-flight MCP call: report that limit at the next opportunity. Never bypass
+excluded tools or stop unknown/unowned operations; a timer does not authorize
+cancelling a cloud mutation.
 
-An in-flight MCP call can block this protocol: no file, skill, or SQL trigger can
-preempt it. Report that limit at the next opportunity. Never route around an excluded
-tool. Stop only known owned processes when safe/authorized; do not cancel a cloud
-mutation just because a timer elapsed.
+For authorized delegation, load [children.md](references/children.md), the sole
+detailed assignment/receipt protocol. Persist coordinator/executor role.
+A coordinator routes end-to-end assignments and decisions, accepts terminal
+evidence and maintains the consolidated ledger; it does not implement, build/test,
+deeply debug, integrate/merge or deploy. Route direct-work requests to a suitable
+authorized executor, not a new child per step. Explicit role changes reconcile
+live ownership and UNKNOWN first. Preserve one-process end-to-end constraints.
 
-Before authorized delegation, follow [the child-session contract](references/children.md).
-Persist the session's role in the existing snapshot: **coordinator** or **executor**.
-A coordinator assigns end-to-end work, routes dependencies/decisions, reads terminal
-acceptance evidence and maintains one consolidated ledger. It does not implement,
-build/test, deeply debug, integrate/merge source or deploy deliverables itself.
-Route direct-work requests to an existing suitable authorized executor; create
-another only for a real ownership need. Execution of integration, verification or
-publication belongs to an authorized executor, not the coordinator. Reading final
-evidence and recording acceptance is coordination, not executing the checks.
-Role changes must be explicit and reconcile live child ownership first; compaction
-or a new direct request does not silently switch roles. Ordinary solo work stays
-direct; loading this skill never requires a child. Preserve explicit one-process
-end-to-end constraints rather than delegating around them.
-
-The kickoff MUST explicitly require the child to load this skill and maintain its
-own ledger; do not assume skill/context inheritance. Give one bounded assignment
-with an end-to-end outcome, write ownership, dependencies, ordinary authorized
-operations, escalation boundaries, acceptance and failed hypotheses. Record
-declared limits only when supplied; never invent a numeric budget.
-The parent tracks assignments in its existing snapshot, not a competing plan.
-
-Serialize actual overlapping writes, dependencies or measured shared capacity,
-not all work that uses the same service. A blocker states what it blocks and what
-it does not block. UNKNOWN fences the effect and anything that could interfere
-with reconciliation; demonstrably independent authorized work may continue.
-
-Children record intermediate progress locally. Return one terminal result per
-assignment execution: completed with acceptance evidence, failed with evidence and
-no unsafe retry, or blocked/decision-required with the exact missing dependency or
-authority. Do ordinary recovery within the mandate before declaring failure.
-No unsolicited progress pings, acknowledgment chains or repeated unchanged blockers.
-Safety incidents, urgent cancellation and required permission/input gates are
-immediate exceptions; host-generated notifications cannot be suppressed by a skill.
-No separate dependency-change, ownership-release or frozen-head correction notices:
-keep them local until the terminal result. A dependency that prevents completion
-requires one blocked result and stopped dependent work, not an intermediate ping.
-After the parent resolves a block and explicitly resumes the same assignment, a
-new terminal result is legitimate; deduplicate by assignment and receipt revision.
-
-The coordinator reconciles each terminal result once and persists its accepted,
-failed or blocked disposition before routing the next assignment or missing
-decision. Do not wait for progress from a child that returned blocked/stopped, poll
-for status, or create parent/child publication wait circles or routine phase gates.
-Child completion is not parent acceptance or overall completion. Do not share
-one writable snapshot, forward transcripts, or create children merely for this skill.
+Children return one completed, failed or blocked result per assignment execution;
+ordinary recovery and intermediate findings stay local. Genuine block resolution
+and explicit resume permit a new terminal revision, not repeated unchanged reports.
+Safety incidents, urgent cancellation and required permission/input gates remain
+immediate exceptions; host-generated notifications cannot be suppressed.
+Serialize actual shared writes/dependencies/capacity, not all service use.
+UNKNOWN fences its effects and interfering work, not demonstrably independent
+authorized tasks.
 
 ## Finish
 
-Verify against done_when and the current user-approved plan. Append completion with
-evidence, or a partial/blocked handoff with unresolved operations and the next decision.
-Do not introduce new infrastructure to perfect this bookkeeping.
-
-Scope limits: the ledger preserves claims and provenance, not truth automatically.
-Triggers protect storage consistency, not LLM compliance. No automatic hooks,
-timers, background watchers or recurring sessions are installed by this skill.
+Accept against the current user-approved outcome, not activity. Distinguish
+implemented, locally verified, deployed and verified usable results. Append
+completion evidence or a precise partial/blocked handoff with unresolved handles
+and next decision. Coordinators assess relevant final proof, not duplicate execution.
+Missing/inconsistent proof needs targeted clarification, not blind acceptance.
+The ledger preserves claims and provenance; shape checks do not prove truth,
+agent compliance or runtime behavior.

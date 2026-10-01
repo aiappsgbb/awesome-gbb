@@ -123,6 +123,55 @@ class LedgerTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(path.exists())
 
+    def test_stdin_append_receipt_and_file_input_share_history(self):
+        event = self.append()
+        event["state"] = json.loads(event["state"])
+        script = SCHEMA.parents[1] / "scripts" / "ledger.py"
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            base = [sys.executable, str(script), "--db", str(root / "ledger.sqlite")]
+            def run(*args, data=None):
+                return subprocess.run(base + list(args), input=data,
+                                      capture_output=True, text=True, timeout=10)
+            self.assertEqual(run("init").returncode, 0)
+            result = run("append", "--event", "-", data=json.dumps(event))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout),
+                             {"recorded": "task-a-1", "revision": 1})
+            self.assertFalse((root / "-").exists())
+            event.update(revision=2, event_key="task-a-2")
+            payload = root / "event.json"
+            payload.write_text(json.dumps(event))
+            self.assertEqual(run("append", "--event", str(payload)).returncode, 0)
+            snapshot = json.loads(run("read", "--work", "task-a").stdout)
+            self.assertEqual(snapshot["state"], event["state"])
+            self.assertEqual([e["revision"] for e in snapshot["recent_events"]], [2, 1])
+            with sqlite3.connect(root / "ledger.sqlite") as db:
+                self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 1)
+
+    def test_stdin_errors_and_stale_replays_do_not_advance_state(self):
+        event = self.append()
+        event["state"] = json.loads(event["state"])
+        script = SCHEMA.parents[1] / "scripts" / "ledger.py"
+        with tempfile.TemporaryDirectory() as folder:
+            base = [sys.executable, str(script), "--db", str(Path(folder) / "ledger.sqlite")]
+            def run(*args, data=None):
+                return subprocess.run(base + list(args), input=data,
+                                      capture_output=True, text=True, timeout=10)
+            self.assertEqual(run("init").returncode, 0)
+            self.assertEqual(run("append", "--event", "-", data=json.dumps(event)).returncode, 0)
+            invalid_role = {**event, "revision": 2, "event_key": "task-a-2",
+                            "state": {**event["state"], "execution_role": "both"}}
+            for data in ("", "{", "[]", "{}", json.dumps(invalid_role), json.dumps(event)):
+                with self.subTest(data=data):
+                    result = run("append", "--event", "-", data=data)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("progress-guard:", result.stderr)
+                    self.assertNotIn('"recorded"', result.stdout)
+            snapshot = json.loads(run("read", "--work", "task-a").stdout)
+            self.assertEqual(snapshot["revision"], 1)
+            self.assertEqual(len(snapshot["recent_events"]), 1)
+
     def test_snapshot_only_preserves_latest_state_without_old_events(self):
         event = self.append()
         state = json.loads(event["state"])
