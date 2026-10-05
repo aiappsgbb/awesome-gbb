@@ -17,7 +17,7 @@ description: >
   SKILL.md frontmatter, table data / KPI values / code blocks, SME verbatim
   quotes, structured data.
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # GBB Humanizer — remove AI tells from prose
@@ -33,6 +33,11 @@ Wikipedia's "Signs of AI writing" page, maintained by WikiProject AI Cleanup.
 > editing this skill. Awesome-gbb additions are confined to the four sections
 > below this Provenance block (When to use, Voice calibration, Section-aware
 > mode, Density-preserving guardrail) and the GBB changelog at the bottom.
+>
+> The upstream pin tracks blader/humanizer **v3.1.0**, which restructured the
+> catalog into 26 patterns. This skill intentionally keeps the v2.5.1 numbering;
+> the reviewed differences are listed in
+> [`references/upstream-pin.md` § 5](references/upstream-pin.md).
 
 ---
 
@@ -749,7 +754,9 @@ Key insight from Wikipedia: "LLMs use statistical algorithms to guess what shoul
 
 | Version | Upstream tracked | GBB-specific changes |
 |---|---|---|
+| 1.1.1 | blader/humanizer v2.5.1 body; pin v3.1.0 | Merged the v3.1.0 pin refresh (#479) with Short-copy mode. No content change beyond 1.0.7 and 1.1.0. |
 | 1.1.0 | blader/humanizer v2.5.1 | Added Short-copy mode for slide titles, bullets, alt text and interface copy, with Italian tells. Routed `gbb-pptx` short copy and `web-experience-design` UI copy to it; speaker notes keep the prose pass. |
+| 1.0.7 | blader/humanizer v2.5.1 body; pin v3.1.0 | Re-pinned upstream to v3.1.0 (`225a6f39`) and fixed pin validation for the v3 restructure (#479). Vendored catalog and numbering unchanged; v3 tells not yet adopted are listed in the pin file § 5. |
 | 1.0.0 | blader/humanizer v2.5.1 | Initial fork. Frontmatter adapted to AGENTS.md § 2.4 schema. Added: When-to-use catalog mapping table, pre-canned voice samples (seller pitch + technical blog), section-aware mode (skip code/tables/SME quotes), density-preserving override on pattern 10 for domain rule-of-three lists. Added GBB note inline at pattern 10. |
 
 When upstream `blader/humanizer` ships a new version, audit the diff against
