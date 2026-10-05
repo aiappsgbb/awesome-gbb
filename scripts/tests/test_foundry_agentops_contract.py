@@ -1010,7 +1010,7 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
         self.assertEqual(entry["name"], plugin["name"])
         self.assertEqual(entry["version"], plugin["version"])
         self.assertEqual(marketplace["metadata"]["version"], plugin["version"])
-        self.assertEqual(plugin["version"], "5.0.0")
+        self.assertEqual(plugin["version"], "5.1.0")
         self.assertEqual(self.frontmatter(SKILL / "SKILL.md")["metadata"]["version"], "1.0.0")
 
     def test_manifest_counts_match_discovered_skills(self) -> None:
