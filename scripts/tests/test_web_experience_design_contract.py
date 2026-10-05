@@ -30,7 +30,7 @@ class WebExperienceDesignContractTests(unittest.TestCase):
         metadata = yaml.safe_load(text.split("---", 2)[1])
         self.assertEqual(set(metadata), {"name", "description", "metadata"})
         self.assertEqual(metadata["name"], SKILL.name)
-        self.assertEqual(metadata["metadata"]["version"], "1.0.1")
+        self.assertEqual(metadata["metadata"]["version"], "1.1.0")
         self.assertGreaterEqual(len(metadata["description"]), 200)
         self.assertLessEqual(len(metadata["description"]), 1024)
         self.assertIn("USE FOR:", metadata["description"])
@@ -219,12 +219,20 @@ class WebExperienceDesignContractTests(unittest.TestCase):
                 item for item in re.findall(r"<li data-search=.*?</li>", index, re.DOTALL)
                 if f"/skills/{SKILL.name}/" in item
             )
-            self.assertIn('class="badge ver">v1.0.1</span>', entry)
+            self.assertIn('class="badge ver">v1.1.0</span>', entry)
             self.assertNotIn("candidate", entry.lower())
             line = next(line for line in llms.splitlines() if line.startswith(f"- [{SKILL.name}]"))
             self.assertIn(f"[{SKILL.name}]({source_url})", line)
             self.assertIn("Merged source; release approval and readiness pending.", line)
             self.assertNotIn("Unreleased draft candidate", line)
+
+    def test_interface_copy_pass_is_wired_before_approval(self) -> None:
+        skill = (SKILL / "SKILL.md").read_text()
+        self.assertIn("gbb-humanizer", skill)
+        craft = (SKILL / "references" / "craft.md").read_text()
+        self.assertIn("## Interface copy", craft)
+        self.assertIn("not model output", craft.lower())
+        self.assertIn("| Copy |", (SKILL / "references" / "verification.md").read_text())
 
     def test_catalog_versions_and_source_counts_remain_consistent(self) -> None:
         plugin = json.loads((ROOT / "plugin.json").read_text())

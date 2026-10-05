@@ -84,6 +84,21 @@ Show the change from five to six, the two blocked reviews and the requested
 access decision. Attribute the baseline dates from the real source when using
 this pattern. Do not infer a launch date or "on track" from one completed review.
 
+## Voice: replace AI-style copy with specific claims
+
+Authored synthetic before/after pairs (not model output). They illustrate the
+voice row in [editorial review](review.md); they are not a lexical checklist.
+
+| Element | Before | After |
+|---|---|---|
+| Title (EN) | "Unlocking the power of AI to transform operations" | "Routing pilot cut mean handling time from 40 to 30 minutes in 20 requests" |
+| Bullets (EN) | "Seamless integration · Unmatched scalability · Robust security" | "Uses the existing ticket API · Tested to 500 requests/hour · Same access roles as today" |
+| Title (IT) | "Una soluzione innovativa e all'avanguardia per il futuro del business" | "Il progetto pilota riduce l'attesa media da 40 a 30 minuti su 20 richieste" |
+| Bullets (IT) | "In un mondo in cui l'AI cambia tutto, abilitiamo efficienza, agilità e innovazione" | "Due revisioni restano bloccate: serve l'accesso al registro entro venerdì" |
+| Alt text | "Image showing a powerful dashboard" | "Bar chart: handling time fell from 40 to 30 minutes after the change (synthetic S1)" |
+
+Keep the facts of the source; do not add numbers to make copy sound concrete.
+
 ## Revision scope: preserve what was approved
 
 If asked only to clarify D2, repair its title, caveat and explanation while

@@ -1,7 +1,8 @@
 # Web Experience Design validation
 
 Status: **merged source available; release and global promotion pending**.
-Skill version: **1.0.1** (publication wording correction only).
+Skill version: **1.1.0** (interface-copy pass added before direction approval;
+authored examples, not model-output evidence).
 
 Version 1.0.0 merged in [PR #510](https://github.com/aiappsgbb/awesome-gbb/pull/510)
 on 2026-09-21 at

@@ -4,6 +4,35 @@ Use after the task structure is understood, before visual implementation.
 Craft makes a coherent experience legible and distinctive; it does not rescue
 a structure that is confusing in monochrome.
 
+## Interface copy
+
+Write copy from the content inventory before direction approval, and reread it
+after material edits. Each string should help the reader decide, act or recover.
+Apply `gbb-humanizer` short-copy guidance where available; do not humanize code,
+identifiers, product/SKU names, legal text, citations or user-approved wording.
+
+| Check | Reject | Prefer |
+|---|---|---|
+| Headline | Slogan or inflated promise with no subject | The specific outcome, scope or answer |
+| Card set | Same abstract template on every card | Distinct facts; drop cards that add nothing |
+| Labels | Clever or vague verbs ("Explore", "Unlock") | The action and object ("Download PDF") |
+| Empty/error | Apology, blame or generic failure | What happened, what is kept, the next step |
+| Alt text | "Image of..." or decorative narration | The information the image carries, or empty alt if decorative |
+| Italian | Calques and stock terms (*soluzione innovativa*, *all'avanguardia*, *In un mondo in cui*) | Plain register; native word order; *Lei*/*tu* consistent with the product |
+
+Avoid forced triads, stacked adjectives, rhetorical questions and formulaic
+openers unless the content genuinely needs them. Keep consistent terms for the
+same control. Authored synthetic examples (not model output):
+
+| Before | After |
+|---|---|
+| "Unlock the power of AI-driven insights" | "Compare monthly cost by region" |
+| "Oops! Something went wrong." | "The export failed because the file exceeds 50 MB. Your filters are kept. Try a shorter date range." |
+| "Nessun risultato. Prova a esplorare nuove possibilità!" | "Nessun ordine nel periodo selezionato. Amplia l'intervallo di date o rimuovi il filtro Stato." |
+| "Una soluzione innovativa, scalabile e sicura per il tuo business" | "Gestisci le fatture dei fornitori in un unico registro con approvazione a due livelli" |
+
+A lexical scan can flag candidates; it does not establish natural, useful copy.
+
 ## Compose around the subject
 
 Identify the real object of attention: a decision, comparison, process,
