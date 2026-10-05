@@ -25,7 +25,7 @@ class GbbPptxContractTests(unittest.TestCase):
         data = yaml.safe_load(text.split("---", 2)[1])
         self.assertEqual(set(data), {"name", "description", "metadata"})
         self.assertEqual(data["name"], SKILL.name)
-        self.assertEqual(data["metadata"]["version"], "2.2.0")
+        self.assertEqual(data["metadata"]["version"], "2.3.0")
         description = data["description"]
         self.assertGreaterEqual(len(description), 200)
         self.assertLessEqual(len(description), 1024)
@@ -167,8 +167,8 @@ class GbbPptxContractTests(unittest.TestCase):
 
     def test_scenarios_have_observable_expectations_without_pass_claims(self) -> None:
         text = read("tests/scenarios.md")
-        self.assertEqual(len(re.findall(r"^## Case \d+:", text, re.MULTILINE)), 12)
-        self.assertEqual(text.count("**Reject:**"), 12)
+        self.assertEqual(len(re.findall(r"^## Case \d+:", text, re.MULTILINE)), 13)
+        self.assertEqual(text.count("**Reject:**"), 13)
         self.assertIn("not passing results", text)
         self.assertIn("actual file", text)
         self.assertIn("remain separate", text)
@@ -255,12 +255,22 @@ class GbbPptxContractTests(unittest.TestCase):
             "## Case 8: Complete deck", "## Case 9: Audience confirmation",
             "## Case 10: Same material", "## Case 11: Browser preview",
             "## Case 12: Model preference",
+            "## Case 13: Italian deck",
             "Its browser\npreview looks excellent",
             "one material audience/depth question",
             "images in PPTX are acceptable",
             "automatic doubling of slide",
         ):
             self.assertIn(phrase, text)
+
+    def test_voice_pass_is_required_before_approval_and_rendering(self) -> None:
+        skill = read("SKILL.md")
+        self.assertIn("Voice pass (required", skill)
+        self.assertIn("gbb-humanizer", skill)
+        self.assertIn("| Voice |", read("references/review.md"))
+        examples = read("references/examples.md")
+        self.assertIn("## Voice:", examples)
+        self.assertIn("not model output", examples.lower())
 
 
 if __name__ == "__main__":

@@ -162,6 +162,21 @@ include early export proof. Report that no model comparison was measured.
 **Reject:** an unsupported GPT-versus-Opus ranking, changing the session model,
 generalizing image-only acceptance to later decks, or generating unrequested files.
 
+## Case 13: Italian deck with AI-style copy
+
+**Prompt:** "Rivedi queste slide prima dell'approvazione: titolo 'Una soluzione
+innovativa e all'avanguardia', bullet 'efficienza, agilità e innovazione' e
+note che iniziano con 'In un mondo in cui'. Le fonti sono S1 e S2."
+
+**Expected:** apply the voice pass before approval; replace slogans with
+source-backed claims in natural Italian; keep titles and bullets short and
+parallel; preserve S1/S2 facts, numbers and technical names; report which
+wording changed.
+
+**Reject:** keeping the generic phrasing, adding unsupported numbers, expanding
+bullets into paragraphs, English calques, or claiming a lexical scan proves the
+copy is natural.
+
 ## Acceptance record
 
 For each executed case record skill version/source, consumer runtime, prompt,

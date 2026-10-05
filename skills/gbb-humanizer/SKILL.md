@@ -11,12 +11,13 @@ description: >
   USE FOR: humanize prose, remove AI-isms, polish overview.html, polish demo
   script, polish speaker notes, AI tells, ChatGPT cadence, em dash overuse,
   rule of three, voice calibration, GBB seller voice, Cowork prose polish,
-  threadlight overview polish, gbb-pptx speaker notes polish, sound less AI.
+  threadlight overview polish, gbb-pptx speaker notes polish, slide titles,
+  bullets and alt text, UI copy, Italian AI copy, sound less AI.
   DO NOT USE FOR: code, agent system prompts (directive style intentional),
-  SKILL.md frontmatter, tables / KPI cards / code blocks, SME verbatim quotes,
-  structured data.
+  SKILL.md frontmatter, table data / KPI values / code blocks, SME verbatim
+  quotes, structured data.
 metadata:
-  version: "1.0.6"
+  version: "1.1.0"
 ---
 
 # GBB Humanizer — remove AI tells from prose
@@ -45,7 +46,9 @@ the catalog's prose-heavy artifacts to whether and how to humanize them.
 |---|---|---|---|
 | `specs/overview.html` body paragraphs | `threadlight-design` | ✅ yes | Highest ROI. Pass `gbb-seller-pitch.md` as the voice sample. **Skip** the hero kicker (already disciplined), tables, KPI cards, code blocks, SME verbatim quotes. |
 | `specs/prep-guide.md` / `specs/demo-script.md` | `threadlight-design` (post-deploy phase) | ✅ yes | Read aloud or paraphrased to customers. Use `gbb-seller-pitch.md`. |
-| Speaker notes in generated PPTX | `gbb-pptx` | ✅ yes | Speaker notes get spoken verbatim. Use `gbb-seller-pitch.md`. **Do not** humanize slide bullets — those need to stay punchy and parallel. |
+| Speaker notes in generated PPTX | `gbb-pptx` | ✅ yes | Speaker notes get spoken verbatim. Use `gbb-seller-pitch.md` and the prose patterns. |
+| Slide titles, bullets and alt text | `gbb-pptx` | ✅ yes (short-copy mode) | Run [Short-copy mode](#gbb--short-copy-mode) before content approval and after material edits. Keep bullets punchy and parallel; do not expand them into prose. |
+| Interface headings, card copy, empty states and errors | `web-experience-design` | ✅ yes (short-copy mode) | Same mode. Operational labels (`Save`, `Export CSV`, column names) stay terse and literal. |
 | Generated README "Demo" section | `threadlight-deploy` | ✅ yes (light pass) | Use `gbb-technical-blog.md`. |
 | `specs/SPEC.md` body sections | `threadlight-design` | ⚠️ selective | Humanize the narrative sections (overview, in-scope/out-of-scope rationale). **Do not** touch BR-XXX rule definitions, eval scenario tables, or the canonical sections sellers use to navigate. |
 | `specs/AGENTS.md` | `threadlight-design` | ❌ no | Runtime contract for sub-agents. Directive style is intentional. |
@@ -105,6 +108,56 @@ content destroys load-bearing structure. **Skip** these spans entirely:
 
 When in doubt: **prose paragraphs only**. If a span has more punctuation than
 words, or contains a code identifier, leave it alone.
+
+The prose patterns skip headings, card text and badges. When a caller asks
+for slide or interface copy, apply [Short-copy mode](#gbb--short-copy-mode)
+to those spans instead. Table data, KPI values, identifiers and quotes stay
+verbatim in both modes.
+
+---
+
+## GBB · Short-copy mode
+
+Use this mode for slide titles, bullets, alt text, interface headings, card
+copy, empty states and error messages. These spans are short and often
+parallel, so the prose rewrites (adding rhythm, opinions, first person) do
+not apply. The goal is a specific, checkable statement in the same space.
+
+For each span:
+
+1. **Say the claim.** A title states what the audience should conclude:
+   `Claims triage time fell from 4 days to 6 hours`, not
+   `Unlocking the power of AI`. Use only facts already in the source; never
+   invent a number to make a line concrete. If no fact exists, write a
+   plain topic and flag the gap.
+2. **Cut inflation.** Remove `innovative`, `cutting-edge`, `seamless`,
+   `robust`, `game-changing`, `next-generation`, `transformative` unless the
+   source defines what they mean.
+3. **Drop openers and slogans.** No `In today's fast-paced world`,
+   `Let's dive in`, `Empower your journey`, `Redefining X`.
+4. **Check triads.** Keep a list of three only when each item is a separate
+   fact (see the density guardrail). Remove `efficiency, agility and
+   innovation` style padding.
+5. **Vary repeated card copy.** When cards repeat the same frame
+   (`Seamlessly integrate…`, `Effortlessly manage…`), lead each with its own
+   object or result.
+6. **Write useful states.** An error says what failed and what to do next
+   (`Upload failed: file exceeds 25 MB. Compress it or split the PDF.`). An
+   empty state says why it is empty and the next action. Alt text describes
+   what the image shows and the point it supports.
+7. **Preserve the frame.** Keep length, parallel structure, numbers, product
+   and model names, citations and wording the user has already approved.
+
+**Italian.** Apply the same rules in Italian. Common tells:
+`soluzione innovativa`, `all'avanguardia`, `In un mondo in cui…`,
+`sfruttare il potere di`, `fare la differenza`, `abilitare` used as a calque
+of *enable*, `a 360 gradi`, and padded triads such as `efficienza, agilità e
+innovazione`. Prefer the plain verb (`riduce`, `permette`, `mostra`) and the
+fact: `Il triage dei sinistri passa da 4 giorni a 6 ore`. Keep established
+English technical terms when the audience uses them.
+
+A word list or regex scan can catch these tells, but passing it does not
+show the copy reads naturally. Reread the result in context.
 
 ---
 
@@ -696,6 +749,7 @@ Key insight from Wikipedia: "LLMs use statistical algorithms to guess what shoul
 
 | Version | Upstream tracked | GBB-specific changes |
 |---|---|---|
+| 1.1.0 | blader/humanizer v2.5.1 | Added Short-copy mode for slide titles, bullets, alt text and interface copy, with Italian tells. Routed `gbb-pptx` short copy and `web-experience-design` UI copy to it; speaker notes keep the prose pass. |
 | 1.0.0 | blader/humanizer v2.5.1 | Initial fork. Frontmatter adapted to AGENTS.md § 2.4 schema. Added: When-to-use catalog mapping table, pre-canned voice samples (seller pitch + technical blog), section-aware mode (skip code/tables/SME quotes), density-preserving override on pattern 10 for domain rule-of-three lists. Added GBB note inline at pattern 10. |
 
 When upstream `blader/humanizer` ships a new version, audit the diff against
