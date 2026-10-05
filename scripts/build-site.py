@@ -67,6 +67,7 @@ CATEGORIES: dict[str, list[str]] = {
         'foundry-cost-monitoring', 'foundry-network-runbook',
         'gbb-humanizer',
         'ghcp-cli-config', 'copilot-doctor', 'paygo-ptu-cost-analyzer', 'progress-guard',
+        'pulse-projects',
     ],
     '🛡️ Governance': [
         'citadel-hub-deploy', 'citadel-spoke-onboarding', 'foundry-agt',

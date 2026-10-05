@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.1.0 — Proposed / Unreleased — add pulse-projects
+
+- Add [`pulse-projects`](skills/pulse-projects/SKILL.md) **1.0.0**: keep the
+  user's projects up to date as living context, one curated YAML per customer
+  in the user's OneDrive Pulse folder. Covers schema, discovery threshold,
+  updating on new meetings/emails/conversations, read-before-write, curation
+  limits, commitment lifecycle (no deadlines or overdue) and observer
+  auto-archive. Internal IP, no Azure dependency, so no live-Azure fixture
+  applies (T0 only).
+- Catalog becomes **43 skills**; plugin and marketplace **5.0.0 → 5.1.0**.
+
 ## Unreleased — gbb-pptx audience and delivery defaults
 
 - [`gbb-pptx`](skills/gbb-pptx/SKILL.md) MINOR **2.1.0 → 2.2.0**:
