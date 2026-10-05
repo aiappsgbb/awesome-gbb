@@ -1,9 +1,9 @@
 ---
 name: pulse-projects
 description: >
-  Persistent per-customer project memory: one curated YAML file per engagement in
-  the user's OneDrive Pulse folder, tracking status, risk, stakeholders,
-  commitments, timeline, artifacts and teammate context. USE FOR: the user
+  Keep the user's projects up to date as living context: one curated YAML file
+  per customer engagement in the user's OneDrive Pulse folder, tracking status,
+  risk, stakeholders, commitments, timeline and artifacts. USE FOR: the user
   mentions a customer, deal, engagement, initiative or stakeholder by name;
   describes a meeting, email or conversation that affects a known engagement;
   asks about commitments, status, or who-said-what for named work; creating,
@@ -16,7 +16,7 @@ metadata:
 
 # Pulse Projects
 
-Persistent project memory: one YAML file per customer engagement, stored in OneDrive. The schema, the file location, and the rules for what's worth tracking.
+Living context for the user's work: one YAML file per customer engagement, stored in OneDrive and kept current as meetings, emails and conversations happen. The schema, the file location, how to update, and the rules for what's worth tracking.
 
 ## Path
 
@@ -68,11 +68,6 @@ timeline:                                # max 10 entries
   - {date, event, source}
 related_artifacts:                       # max 6
   - {type, path, description}
-team_context:                            # max 5 entries — what teammates' Pulses know
-  - from: jane                           # teammate handle
-    relevance: high                      # high | low | none | pending
-    summary: "Working on similar architecture with another customer. Has shared assets."
-    last_updated: "2026-05-05"
 watch_queries: ["customer", "person"]    # max 3
 tags: ["industry", "tech"]               # max 4
 notes: |
@@ -91,43 +86,18 @@ Passive mentions and CC'd emails do NOT meet the threshold.
 
 Before creating, search existing slugs. If a file already exists, **update it**. Default `involvement: observer` unless the user clearly owns it.
 
-## Team context broadcast — automatic on key events
+## Updating — keep the context living
 
-Teammates running their own Pulse may have relevant context on the same customer. On qualifying events, fan out a query to every reachable teammate and let their Pulses respond asynchronously. Replies arrive minutes or hours later through `/agent-inbox`. When a reply has a `project_id`, update that project's `team_context` entry for the sender.
+Whenever a meeting, email, chat or the user's own words touch a tracked project, update its file in the same turn:
 
-This section is **optional** and requires an `agent-inbox` skill for agent-to-agent messaging. If none is installed, skip it silently and leave `team_context` empty.
+- **summary** — rewrite to reflect the current state (≤2 sentences), not history
+- **timeline** — add a dated entry with its source
+- **commitments** — add new follow-ups; mark ones that were fulfilled or dropped
+- **stakeholders** — add new people, refresh `last_interaction`
+- **status / risk_level** — change only when a source says so
+- **last_verified** and **updated_at** — set to today / now
 
-**When to broadcast:**
-- **Always on new project creation** (discovery threshold met for a customer not yet tracked)
-- On **major updates**: status escalation to `blocked`, `risk_level` raised to `high`/`critical`, project moves from `on-hold` back to `active`
-- **7-day cooldown** per project — don't re-broadcast on minor changes (timeline entries, refresh, stakeholder pruning)
-
-**How:**
-
-1. Pick the teammates to ask (the user's usual team, or anyone they name).
-2. Send **one** `agent_request` to all of them using `/agent-inbox`'s Ask flow, with `project_id` set to this project's slug and this task:
-
-   ```yaml
-   task: |
-     New engagement: <Customer> / <Initiative>.
-     Have you had activity on this in the LAST 30 DAYS? Looking for: ongoing meetings,
-     commitments, key contacts, anything pertinent right now.
-     Context (1 line): <summary>
-   ```
-
-3. Seed a `team_context` entry per teammate in the project YAML:
-
-   ```yaml
-   team_context:
-     - from: <handle>
-       relevance: pending
-       summary: "Asked <today>, no response yet."
-       last_updated: "<today>"
-   ```
-
-4. Continue creating/updating the project. **Don't block** waiting for replies.
-
-If no teammates are reachable, skip silently — leave `team_context` empty.
+Prefer fewer, accurate entries over a complete log. If nothing material changed, only bump `last_verified`.
 
 ## Read-before-write
 
@@ -135,13 +105,13 @@ Always: list directory → read existing file → merge new info → apply curat
 
 ## Curation limits (HARD)
 
-Stakeholders ≤6 · Timeline ≤10 · Tags ≤4 · Watch queries ≤3 · Artifacts ≤6 · `team_context` ≤5 · Summary ≤2 sentences. When exceeded, **prune oldest low-value entries first** — never the newest.
+Stakeholders ≤6 · Timeline ≤10 · Tags ≤4 · Watch queries ≤3 · Artifacts ≤6 · Summary ≤2 sentences. When exceeded, **prune oldest low-value entries first** — never the newest.
 
 ## Commitment lifecycle
 
 The user has **no deadlines or targets**. Commitments are a record of who said they'd follow up on what, nothing more.
 
-- There is **no `overdue` status**. Never mark, report, or count anything as overdue, late, missed, or past due — including customer or teammate actions.
+- There is **no `overdue` status**. Never mark, report, or count anything as overdue, late, missed, or past due — including anyone else's actions.
 - A passed `date_mentioned` changes nothing: no status change, no `risk_level` change, no `blocked`, no flag in the report.
 - Attribute to the real owner. Use `who: "You"` only when the user explicitly volunteered the action in their own words; attendance, CCs, or being on an invite never make it theirs.
 - Mark `done` with completion source when fulfilled. Mark `cancelled` with `cancelled_reason` only when a source says it was dropped or superseded.
@@ -158,4 +128,3 @@ The user has **no deadlines or targets**. Commitments are a record of who said t
 - Mark `lead` from a single email or meeting attendance
 - Mark or report anything as overdue, late, or missed, or treat any date as the user's deadline or target
 - Delete history when uncertain — add a `[STALE]` or `[INFO]` timeline entry instead
-- Broadcast on minor updates — that spams teammates
