@@ -29,6 +29,7 @@ __pycache__/
 
 # local upload artifacts (cowork zips)
 skills/*.zip
+/dist/cowork/
 
 .zava-audit/
 

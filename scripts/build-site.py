@@ -74,7 +74,7 @@ CATEGORIES: dict[str, list[str]] = {
         'azure-sre-agent',
     ],
     '📊 Content Generation': [
-        'web-experience-design', 'gbb-pptx', 'auto-demo-producer',
+        'web-experience-design', 'html-presentation', 'gbb-pptx', 'auto-demo-producer',
     ],
     '🔍 Discovery': [
         'ip-catalog',
