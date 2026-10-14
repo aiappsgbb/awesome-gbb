@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — token-economics current model families
+
+- [`token-economics`](skills/token-economics/SKILL.md) MINOR **1.0.0 → 1.1.0**:
+  re-measure deferred tool loading on gpt-5.5, gpt-5.6-terra/luna, gpt-6-sol/luna,
+  gpt-6.1-sol and gpt-6-astra (cold and warm, retail price ratios). Warm small
+  catalogs cost more deferred on every family (+24% to +171%); large catalogs
+  save 37–68% (gpt-5.5 warm independent +1%, gpt-6.1-sol −12%).
+- Model GPT-5.6+ cache writes (subset of input, 1.25×) in the script and decision
+  formula; document implicit vs explicit cache-write behaviour (KI-005).
+- Track tools loaded by search and `found_not_called`; demo cases now provide every
+  required field; explicit client timeouts. No new Azure resources remain.
+
 ## 5.2.0 — Unreleased — token-economics
 
 - Add [`token-economics`](skills/token-economics/SKILL.md) **1.0.0**: an ordered

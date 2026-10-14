@@ -21,7 +21,8 @@ Usage (Entra ID; the identity needs Cognitive Services OpenAI User):
 Multi-case mode: ``--cases cases.jsonl`` (one {"prompt", "expect_tool"} per
 line) reports tool-selection success per variant; ``--session`` chains the
 cases as turns of one conversation to observe caching across a session.
-``--cached-ratio``/``--output-ratio`` add an input-equivalent cost estimate.
+``--cached-ratio``/``--output-ratio`` (and ``--cache-write-ratio`` for GPT-5.6+)
+add an input-equivalent cost estimate.
 
 Exit codes: 0 = deferred variant called every expected tool; 1 = it missed at
 least one (selection regression); 2 = configuration/API/input error (for
@@ -68,9 +69,14 @@ def openai_base_url(endpoint: str) -> str:
     return endpoint + "/openai/v1/"
 
 
-def make_client(endpoint: str, tenant: str | None = None) -> OpenAI:
+def make_client(endpoint: str, tenant: str | None = None, timeout: float = 120.0) -> OpenAI:
     credential = AzureCliCredential(tenant_id=tenant) if tenant else DefaultAzureCredential()
-    return OpenAI(base_url=openai_base_url(endpoint), api_key=get_bearer_token_provider(credential, SCOPE))
+    return OpenAI(
+        base_url=openai_base_url(endpoint),
+        api_key=get_bearer_token_provider(credential, SCOPE),
+        timeout=timeout,
+        max_retries=2,
+    )
 
 
 def build_demo_catalog() -> list[dict[str, Any]]:
@@ -125,9 +131,23 @@ def _usage(response: Any) -> dict[str, int]:
     return {
         "input_tokens": u.input_tokens,
         "cached_tokens": getattr(in_details, "cached_tokens", 0) or 0,
+        # GPT-5.6+ Standard: subset of input_tokens billed at the cache-write rate.
+        "cache_write_tokens": getattr(in_details, "cache_write_tokens", 0) or 0,
         "output_tokens": u.output_tokens,
         "reasoning_tokens": getattr(out_details, "reasoning_tokens", 0) or 0,
     }
+
+
+def _tool_names(tools: list[Any]) -> list[str]:
+    """Function names inside tool_search_output (namespaces flattened)."""
+    names = []
+    for tool in tools:
+        t = tool if isinstance(tool, dict) else tool.model_dump()
+        if t.get("type") == "namespace":
+            names += [member.get("name") for member in t.get("tools", [])]
+        elif t.get("name"):
+            names.append(t["name"])
+    return names
 
 
 def run_case(
@@ -148,13 +168,14 @@ def run_case(
         "include": ["reasoning.encrypted_content"],
     }
     history.append({"role": "user", "content": prompt})
-    inferences, called, searched = [], [], []
+    inferences, called, searched, loaded = [], [], [], []
     started = time.perf_counter()
     for _ in range(max_inferences):
         response = client.responses.create(input=history, **common)
         inferences.append(_usage(response))
         history += [o.model_dump(exclude_none=True) for o in response.output]
         searched += [o.arguments for o in response.output if o.type == "tool_search_call"]
+        loaded += [name for o in response.output if o.type == "tool_search_output" for name in _tool_names(o.tools)]
         calls = [o for o in response.output if o.type == "function_call"]
         if not calls:
             break
@@ -167,6 +188,7 @@ def run_case(
         "inferences": inferences,
         "called_tools": called,
         "tool_search_arguments": searched,
+        "loaded_tools": sorted(set(loaded)),
         "elapsed_s": round(time.perf_counter() - started, 2),
     }
 
@@ -183,6 +205,8 @@ def run_variant(
         result = run_case(client, model, history, case["prompt"], tools, effort)
         result["expect_tool"] = case["expect_tool"]
         result["success"] = case["expect_tool"] in result["called_tools"]
+        # Distinguishes "never found" from "found but asked the user for input".
+        result["expected_loaded"] = case["expect_tool"] in result["loaded_tools"]
         results.append(result)
     inferences = [i for r in results for i in r["inferences"]]
     return {
@@ -192,19 +216,28 @@ def run_variant(
         "called_tools": [t for r in results for t in r["called_tools"]],
         "tool_search_arguments": [a for r in results for a in r["tool_search_arguments"]],
         "successes": sum(r["success"] for r in results),
+        "found_not_called": sum((not r["success"]) and r["expected_loaded"] for r in results),
         "elapsed_s": round(sum(r["elapsed_s"] for r in results), 2),
     }
 
 
-def input_equivalent(totals: dict[str, int], cached_ratio: float, output_ratio: float) -> float:
-    """Cost in uncached-input-token units: U + c*C + r*O (cache writes not modelled)."""
-    uncached = totals["input_tokens"] - totals["cached_tokens"]
-    return round(uncached + cached_ratio * totals["cached_tokens"] + output_ratio * totals["output_tokens"], 1)
+def input_equivalent(totals: dict[str, int], cached_ratio: float, output_ratio: float, write_ratio: float = 1.0) -> float:
+    """Cost in uncached-input-token units: U + c*C + w*W + r*O.
+
+    ``cached_tokens`` and ``cache_write_tokens`` are both subsets of
+    ``input_tokens``; W is billed at ``write_ratio`` (1.25 on GPT-5.6+ Standard,
+    1.0 where writes are not charged separately).
+    """
+    cached, written = totals["cached_tokens"], totals.get("cache_write_tokens", 0)
+    uncached = totals["input_tokens"] - cached - written
+    cost = uncached + cached_ratio * cached + write_ratio * written + output_ratio * totals["output_tokens"]
+    return round(cost, 1)
 
 
 def compare(
     client: OpenAI, model: str, tools: list[dict[str, Any]], cases: list[dict[str, str]] | str,
     effort: str = "low", session: bool = False, cached_ratio: float | None = None, output_ratio: float | None = None,
+    write_ratio: float = 1.0,
 ) -> dict[str, Any]:
     if isinstance(cases, str):  # single prompt, demo expectation
         cases = [{"prompt": cases, "expect_tool": DEMO_EXPECTED_TOOL}]
@@ -221,8 +254,8 @@ def compare(
         "output_token_delta": deferred["totals"]["output_tokens"] - eager["totals"]["output_tokens"],
     }
     if cached_ratio is not None and output_ratio is not None:
-        e_cost = input_equivalent(eager["totals"], cached_ratio, output_ratio)
-        d_cost = input_equivalent(deferred["totals"], cached_ratio, output_ratio)
+        e_cost = input_equivalent(eager["totals"], cached_ratio, output_ratio, write_ratio)
+        d_cost = input_equivalent(deferred["totals"], cached_ratio, output_ratio, write_ratio)
         report["input_equivalent_cost"] = {"eager": e_cost, "deferred": d_cost,
                                            "change_pct": round(100.0 * (d_cost - e_cost) / e_cost, 1)}
     return report
@@ -248,7 +281,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--cases", help="JSONL of {prompt, expect_tool}; overrides --prompt/--expect-tool")
     p.add_argument("--session", action="store_true", help="Chain cases as turns of one conversation")
     p.add_argument("--cached-ratio", type=float, help="Cached/uncached input price ratio, e.g. 0.1")
-    p.add_argument("--output-ratio", type=float, help="Output/uncached input price ratio, e.g. 8")
+    p.add_argument("--output-ratio", type=float, help="Output/uncached input price ratio, e.g. 6")
+    p.add_argument("--cache-write-ratio", type=float, default=1.0,
+                   help="Cache-write/uncached input price ratio (1.25 on GPT-5.6+ Standard)")
     p.add_argument("--effort", default="low", choices=["none", "minimal", "low", "medium", "high"])
     a = p.parse_args(argv)
     if not a.endpoint:
@@ -266,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
             tools = build_demo_catalog()
         cases = load_cases(a.cases) if a.cases else [{"prompt": a.prompt, "expect_tool": a.expect_tool or DEMO_EXPECTED_TOOL}]
         report = compare(make_client(a.endpoint, a.tenant), a.model, tools, cases, a.effort, a.session,
-                         a.cached_ratio, a.output_ratio)
+                         a.cached_ratio, a.output_ratio, a.cache_write_ratio)
     except Exception as exc:  # API/config/input errors (e.g. HTTP 400 on unsupported models)
         print(json.dumps({"error": type(exc).__name__, "detail": str(exc)[:500]}, indent=2))
         return 2

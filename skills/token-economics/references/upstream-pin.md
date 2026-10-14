@@ -48,10 +48,11 @@ known_issues:
   - id: KI-002
     title: "Deferral can cost more than a warm eager cache on small catalogs"
     description: |
-      gpt-5.4, 30 functions (~3.4k tokens), six cases: raw input -66% but
-      input-equivalent cost +72% (independent) / +44% (session) and slower
-      turns, because the eager prefix was ~90% cached and search adds output.
-      160 functions: -62% / -37% cost. Re-measure when cache pricing changes.
+      Every family from gpt-5.4 to gpt-6.1-sol: on a warm 30-function catalog
+      (~3.4k tokens) raw input fell 57-76% but input-equivalent cost rose
+      +24% to +171%; on 160 functions it fell -37% to -68% (gpt-5.5 warm
+      independent +1%, gpt-6.1-sol -12% because cached reads cost 0.05x).
+      Re-measure when model families or cache pricing change.
     upstream_url: null
     status: documented
     notes: Documented in SKILL.md § Measured evidence and § Decide with your own numbers.
@@ -73,6 +74,16 @@ known_issues:
     upstream_url: null
     status: documented
     notes: Documented in SKILL.md § Other levers.
+  - id: KI-005
+    title: "GPT-5.6+ implicit cache mode re-writes the latest message every request"
+    description: |
+      cache_write_tokens is a subset of input_tokens. With the default implicit
+      mode a new 2k prefix wrote ~2,009 tokens once and then ~11 tokens (the
+      latest message) on every request; explicit mode with one breakpoint
+      wrote once and then only read (gpt-5.6-luna, gpt-6-luna).
+    upstream_url: null
+    status: documented
+    notes: Documented in SKILL.md § Other levers and § Measure first.
 
 validation:
   requires:
@@ -100,18 +111,32 @@ validation:
     print('contract ok: endpoint normalization')
     assert m.input_equivalent({'input_tokens': 1000, 'cached_tokens': 800, 'output_tokens': 10}, 0.1, 6) == 340.0
     print('contract ok: input-equivalent cost')
+    assert m.input_equivalent({'input_tokens': 1000, 'cached_tokens': 600, 'cache_write_tokens': 300, 'output_tokens': 10}, 0.1, 6, 1.25) == 595.0
+    print('contract ok: cache-write cost')
     "
   expected_output:
     - "import ok: measure_tool_search"
     - "contract ok: namespace members deferred, tool_search appended, input untouched"
     - "contract ok: endpoint normalization"
     - "contract ok: input-equivalent cost"
+    - "contract ok: cache-write cost"
 
 last_validated: 2026-10-14
 validated_by: ricchi
 ---
 
 ## Audit trail
+
+### 2026-10-14 — Current model families (v1.1.0)
+
+- Temporary GlobalStandard deployments (gpt-5.5, gpt-5.6-terra, gpt-5.6-luna,
+  gpt-6-sol, gpt-6-luna, gpt-6.1-sol, gpt-6-astra) in an owner-controlled
+  account; deleted after the run and absence verified via deployment list.
+- Two full runs per model (cold, then warm) with retail short-context ratios;
+  results in SKILL.md § Measured evidence. Script now models cache writes,
+  tracks loaded tools and `found_not_called`, and sets client timeouts.
+- First run exposed a benchmark artefact: write cases omitted required fields
+  and newer models asked instead of calling; cases now supply all fields.
 
 ### 2026-10-14 — Initial pin (v1.0.0)
 
