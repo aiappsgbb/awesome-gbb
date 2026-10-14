@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: backend-only work, cloud deployment, native mobile apps,
   PowerPoint authoring, prose-only editing or formal accessibility certification.
 metadata:
-  version: "1.0.1"
+  version: "1.1.0"
 ---
 
 # Web Experience Design
@@ -49,6 +49,12 @@ Read the real material before choosing a layout. Record the reader's questions,
 required content, evidence, consequential caveats, actions and delivery constraints.
 Separate facts, interpretation and proposed copy. Never invent claims, sources,
 testimonials, prices, user research or customer results to fill a composition.
+
+Draft interface copy from those facts, not from generic product language. Before
+direction approval, run the interface copy pass in [craft](references/craft.md):
+headlines, labels, cards, empty states, errors and alt text in the user's language,
+applying `gbb-humanizer` short-copy guidance where installed. Keep operational UI
+terse; preserve facts, sources, technical names and copy the user already approved.
 
 For a redesign, inspect the current rendered experience where possible. Define
 3-5 representative tasks, or fewer for a genuinely smaller change, with explicit
@@ -134,6 +140,7 @@ against the rendered result with real content and record expected versus observe
 outcomes. Inspect desktop, narrow screens and intermediate states, not only the
 hero. Check keyboard/focus, applicable contrast and reflow, icons/motion, assets,
 links, meaningful data displays and recovery; verify print/offline when required.
+Reread rendered copy after material edits; a lexical check is not proof of natural voice.
 
 Distinguish **observed**, **source-inferred**, **not checked**, and **blocked**.
 Never call a missing browser check a pass, an automated walkthrough a user study,
@@ -164,7 +171,7 @@ and output quality are separate checks.
 |---|---|
 | [architecture](references/architecture.md) | Deliverable routing, structural choices and content editing |
 | [contracts](references/contracts.md) | Experience and visual contracts without duplicate sources of truth |
-| [craft](references/craft.md) | Typography, composition, icons, visual explanation and motion |
+| [craft](references/craft.md) | Interface copy, typography, composition, icons, visual explanation and motion |
 | [verification](references/verification.md) | Task evidence, accessibility, responsive and delivery checks |
 | [integrations](references/integrations.md) | Optional tools, compatibility, privacy, cost and authority |
 | [evidence](references/evidence.md) | Sources, dates, applicability and conflicts; not mandatory upfront research |
