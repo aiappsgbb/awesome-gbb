@@ -20,6 +20,7 @@ not an unnecessary rewrite of the entire deck.
 | Uncertainty | Could a hidden limitation change the audience's decision? | Move that qualification beside the claim |
 | Delivery mode | Does a read-ahead make sense without hidden notes? | Put essential context in the reading path |
 | Time and scope | Can the argument, examples and discussion fit the requested time? | Trim deliberately; label estimates until rehearsed |
+| Voice | Do titles, bullets, notes and alt text read like a specialist speaking to this audience, in the deck's language? Tells: inflated adjectives ("innovative", "cutting-edge", "soluzione innovativa", "all'avanguardia"), slogans in place of claims, filler openers ("In today's fast-paced world", "In un mondo in cui"), forced triads, formulaic transitions, identical card phrasing, English calques in Italian | State the specific claim, actor and consequence; cut filler; keep short copy short and parallel; preserve facts, sources, technical names and approved wording |
 | Ending | Does it resolve the purpose? | State decision/next step, learning check, conclusion or unresolved question as appropriate |
 
 For data, apply the [evidence rules](evidence.md): sources alone do not prove

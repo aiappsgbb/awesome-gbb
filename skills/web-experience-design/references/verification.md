@@ -43,6 +43,7 @@ private source is missing, and does not authorize bypassing access controls.
 | Area | Observable checks |
 |---|---|
 | Content | Required units reachable; caveats preserved; sources connected to claims; no invented facts or unexplained omissions |
+| Copy | Interface copy pass applied: specific headlines and labels, distinct cards, actionable empty/error states, informative alt text, natural language for the audience; reread after material edits |
 | Navigation | Predictable labels, current location, direct links, functional controls and consistent return behavior |
 | Responsive | Representative desktop and narrow viewports; long labels/data; transitions between layouts; no accidental overflow or lost tasks |
 | Keyboard | Logical traversal, visible focus, no trap, correct widget keys, opening/closing behavior and focus return |

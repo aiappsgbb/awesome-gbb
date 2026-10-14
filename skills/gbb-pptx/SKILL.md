@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: direct editing of existing PPTX files (use `pptx` for file
   operations; use this skill for editorial review), PDF generation, Google Slides.
 metadata:
-  version: "2.2.0"
+  version: "2.3.0"
 ---
 
 # GBB PPTX Deck Generator Skill
@@ -150,7 +150,8 @@ Never manufacture metrics, quotations, testimonials or citations to fill a slide
 
 Apply [editorial and delivery review](references/review.md). Check the title
 sequence for gaps and repetition, each claim against its evidence, and whether
-important objections, alternatives and limits remain visible. Estimate timing
+important objections, alternatives and limits remain visible. Run the voice
+pass on titles, bullets, notes and alt text. Estimate timing
 including explanation, demos and discussion; label estimates until rehearsed.
 
 If sources are insufficient, identify the missing proof and its consequence.
@@ -286,18 +287,21 @@ def add_notes(slide, text):
     slide.notes_slide.notes_text_frame.text = text
 ```
 
-> **Polish pass (optional but recommended).** Speaker notes are pure prose
-> read aloud during the demo — AI-prose tells degrade credibility. After
-> the deck is assembled, run [`gbb-humanizer`](../gbb-humanizer/) over the
-> notes text using the pre-canned `gbb-seller-pitch.md` voice sample.
-> **Do not** humanize slide bullets or titles — those need to stay punchy
-> and parallel; the humanizer's section-aware mode skips them by default.
-
 For content-first decks, notes should explain rather than simply repeat the
 slide. Put the full source locator and optional spoken transition here, but keep
 qualifications that change the headline's meaning on the slide itself.
-If applying `gbb-humanizer`, restrict it to prose: preserve sources, numbers,
-uncertainty and quotations. Recheck meaning afterwards.
+
+> **Voice pass (required for new or materially edited copy).** Before content
+> approval, and again after material copy edits, apply the voice row in
+> [editorial review](references/review.md) to titles, bullets, notes and alt
+> text in the deck's language. Where installed, use
+> [`gbb-humanizer`](../gbb-humanizer/): its short-copy mode for titles,
+> bullets and alt text (keep them concise and parallel; do not expand them),
+> and full prose mode for notes (`gbb-seller-pitch.md` voice sample for
+> seller decks). Preserve sources, numbers, uncertainty, quotations, technical
+> names and approved wording; recheck meaning afterwards. After approval, voice
+> changes beyond mechanical fixes follow the approval contract. A lexical scan
+> can flag candidates; it does not prove natural copy.
 
 ### Save with Lock Detection
 
@@ -436,5 +440,5 @@ Load only the relevant reference; do not read every file for a two-slide edit.
 
 | Skill | Use When |
 |-------|----------|
-| [**gbb-humanizer**](../gbb-humanizer/) | **Polish pass** for speaker notes after the deck is generated. Section-aware mode skips slide bullets and titles (which need to stay punchy and parallel) and only rewrites the prose inside `notes_slide.notes_text_frame.text`. Use the pre-canned `gbb-seller-pitch.md` voice sample. |
+| [**gbb-humanizer**](../gbb-humanizer/) | **Voice pass** before content approval and after material copy edits: short-copy mode for titles, bullets and alt text (concise, parallel, not expanded), prose mode for speaker notes. Use the `gbb-seller-pitch.md` voice sample for seller decks. Covers English and Italian tells. |
 | [**threadlight-design**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design/) | Generates the SpecKit + `overview.html` that this deck's slides typically narrate — the deck is often a re-projection of the same content for an audience that prefers slides to long-form HTML. |
