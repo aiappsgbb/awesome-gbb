@@ -176,20 +176,27 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--tenant", help="Use AzureCliCredential for this tenant instead of DefaultAzureCredential")
     p.add_argument("--tools-file", help="JSON array of Responses tool definitions (default: synthetic demo catalog)")
     p.add_argument("--prompt", default=DEMO_PROMPT)
-    p.add_argument("--expect-tool", default=DEMO_EXPECTED_TOOL)
+    p.add_argument("--expect-tool", help="Tool the deferred variant must call (required with --tools-file)")
     p.add_argument("--effort", default="low", choices=["none", "minimal", "low", "medium", "high"])
     a = p.parse_args(argv)
     if not a.endpoint:
         p.error("--endpoint (or AZURE_OPENAI_ENDPOINT / FOUNDRY_PROJECT_ENDPOINT) is required")
+    if a.tools_file and not a.expect_tool:
+        p.error("--expect-tool is required with --tools-file")
+    expect_tool = a.expect_tool or DEMO_EXPECTED_TOOL
 
-    tools = json.load(open(a.tools_file, encoding="utf-8")) if a.tools_file else build_demo_catalog()
     try:
+        if a.tools_file:
+            with open(a.tools_file, encoding="utf-8") as fh:
+                tools = json.load(fh)
+        else:
+            tools = build_demo_catalog()
         report = compare(make_client(a.endpoint, a.tenant), a.model, tools, a.prompt, a.effort)
-    except Exception as exc:  # surface API/config errors (e.g. HTTP 400 on unsupported models)
+    except Exception as exc:  # API/config/input errors (e.g. HTTP 400 on unsupported models)
         print(json.dumps({"error": type(exc).__name__, "detail": str(exc)[:500]}, indent=2))
         return 2
     print(json.dumps(report, indent=2, default=str))
-    return 0 if a.expect_tool in report["deferred"]["called_tools"] else 1
+    return 0 if expect_tool in report["deferred"]["called_tools"] else 1
 
 
 if __name__ == "__main__":

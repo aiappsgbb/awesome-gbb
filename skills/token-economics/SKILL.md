@@ -163,7 +163,7 @@ synthetic function output; `reasoning.effort=low`, `store=False`. Values are
 | Model | Catalog | Eager | Deferred | Raw input change |
 |---|---|---|---|---|
 | gpt-5.4-mini | 30 fn / 5 ns | 5,041/4,864 → 5,157/4,864 | 1,684/0 → 1,920/0 | **−64.7%** (+152 output) |
-| gpt-5.4 | 30 fn / 5 ns | 5,041/4,864 → 5,138/4,992 | 1,682/0 → 1,772/1,536 | **−65.7%** (+61 output) |
+| gpt-5.4 | 30 fn / 5 ns | 5,041/0 → 5,142/4,992 | 1,682/0 → 1,814/0 | **−65.7%** (+61 output) |
 | gpt-5.4 | 160 fn / 20 ns | 27,190/0 → 27,286/27,136 (cold); 27,190/27,008 → 27,294/27,136 (warm) | 4,033–4,058/0 → 4,127–4,206/0–1,024 | **−85%** (+70–200 output) |
 
 Observations to plan around:
@@ -208,7 +208,7 @@ pip install "openai>=3.26,<4" "azure-identity>=1.25,<2"
 python references/python/measure_tool_search.py \
   --endpoint https://<resource>.openai.azure.com \
   --model <gpt-5.4-or-later-deployment> \
-  [--tenant <tenant-id>] [--tools-file tools.json --prompt "..." --expect-tool <name>]
+  [--tenant <tenant-id>] [--tools-file tools.json --expect-tool <name> --prompt "..."]
 ```
 
 - `--endpoint` also accepts a Foundry project endpoint (`…/api/projects/<p>`).
@@ -216,7 +216,7 @@ python references/python/measure_tool_search.py \
   `https://ai.azure.com/.default`.
 - `--tools-file` takes your real catalog (a JSON array of Responses tools) and
   derives the deferred variant (`defer_loading` on functions, namespace members and
-  MCP servers, plus `tool_search`).
+  MCP servers, plus `tool_search`). `--expect-tool` is then required.
 - Exit `0` = deferred variant called the expected tool, `1` = it did not (selection
   regression), `2` = API/config error (e.g. the HTTP 400 above).
 - Run each variant several times; report distributions and the eager cache-hit ratio
