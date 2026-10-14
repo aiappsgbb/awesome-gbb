@@ -1,14 +1,13 @@
 ---
 name: foundry-prompt-agents
 description: >
-  Create and manage Foundry prompt agents — declarative agents that
+  Manage Foundry prompt agents — declarative agents that
   combine a model, instructions, and tools without containers or
   custom code. Covers azure-ai-projects SDK (PromptAgentDefinition),
   tool wiring (web search, code interpreter, file search, MCP,
   OpenAPI, Fabric IQ, Work IQ, Tool Search, Skill Reference,
-  Guardrail, A2A, Browser Automation), conversations API,
-  versioning, structured inputs, and publishing as agent
-  applications.
+  content-safety boundaries, A2A, browser preview), conversations API,
+  versioning, structured inputs, and legacy agent application publishing.
   USE FOR: prompt agent, declarative agent, PromptAgentDefinition,
   azure-ai-projects, agent tools, WebSearchTool, CodeInterpreterTool,
   FileSearchTool, MCPTool, OpenApiTool, FabricIQTool, WorkIQTool,
@@ -19,7 +18,7 @@ description: >
   MCP server deployment (use foundry-mcp-aca), agent evaluation (use
   foundry-evals), Knowledge Base / retrieval (use foundry-iq).
 metadata:
-  version: "1.1.12"
+  version: "1.2.0"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
@@ -113,6 +112,14 @@ curl -X POST "https://<resource>.services.ai.azure.com/api/projects/<project>/ag
 Prompt agents support all tools from the Foundry tool catalog. Add them
 via the `tools` parameter on `PromptAgentDefinition`.
 
+### Prepare resources before wiring tools
+
+Follow [tool prerequisites and connections](references/tool-prerequisites.md)
+before creating an agent version. A tool definition references resources; it
+does not create a vector store, Search index, OAuth connection or browser
+resource. Use the declared SDK 2.4 cohort below; a current portal feature or
+newer schema is not permission to upgrade an application's runtime.
+
 ### Built-in tools
 
 ```python
@@ -191,13 +198,11 @@ agent = project.agents.create_version(
 
 ### Build 2026 additions (preview)
 
-The //build 2026 wave shipped seven additional first-class prompt-agent
-tools. Each is exposed in `azure-ai-projects ≥ 2.0.0` and wired the same
-way as the GA tools above. Cross-references point to the dedicated skills
-that cover the connection setup, server-side resources, or governance
-contract for each tool — some of those skills are forthcoming in this
-catalog (tracked in the //build 2026 update wave); use the upstream Foundry
-docs in the meantime.
+Availability is specific to the SDK and service. The examples below use the
+public **SDK 2.4** exports `FabricIQPreviewTool`, `WorkIQPreviewTool` and
+`BrowserAutomationPreviewTool`. Historical headings are retained for links;
+they are not import names. Preview tools require `allow_preview=True` on the
+project client. Tool Search, Skills and A2A have separate cohort boundaries.
 
 #### FabricIQTool
 
@@ -205,18 +210,21 @@ Grounds a prompt agent in Microsoft Fabric data via a Fabric workspace
 connection.
 
 ```python
-from azure.ai.projects.models import FabricIQTool, PromptAgentDefinition
+from azure.ai.projects.models import FabricIQPreviewTool, PromptAgentDefinition
 
 definition = PromptAgentDefinition(
     model="gpt-5-mini",
     instructions="Answer questions about Q3 revenue using Fabric data.",
-    tools=[FabricIQTool(connection_id="<fabric-connection-id>")],
+    tools=[FabricIQPreviewTool(
+        project_connection_id="<fabric-connection-id>",
+        require_approval="always",
+    )],
 )
 ```
 
 Requires a Fabric workspace + a project-scoped connection
 (`Microsoft.CognitiveServices/accounts/.../connections/<name>`).
-See the [Fabric IQ tool docs](https://learn.microsoft.com/azure/ai-foundry/tools/fabric-iq).
+See the [Fabric IQ tool docs](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/fabric-iq).
 
 #### WorkIQTool
 
@@ -224,19 +232,19 @@ Grounds a prompt agent in Microsoft 365 / Graph (mail, calendar,
 SharePoint, Teams) via a Work IQ connection.
 
 ```python
-from azure.ai.projects.models import WorkIQTool, PromptAgentDefinition
+from azure.ai.projects.models import WorkIQPreviewTool, PromptAgentDefinition
 
 definition = PromptAgentDefinition(
     model="gpt-5-mini",
-    instructions="Summarize my unread email threads about Project Hummingbird.",
-    tools=[WorkIQTool(connection_id="<work-iq-connection-id>")],
+    instructions="Summarize my unread email threads about the selected project.",
+    tools=[WorkIQPreviewTool(project_connection_id="<work-iq-connection-id>")],
 )
 ```
 
-Requires an M365 / Graph connection on the Foundry project. The connection
-contract is identical to Fabric IQ — see the
-[Work IQ tool docs](https://learn.microsoft.com/azure/ai-foundry/tools/work-iq)
-for tenant-admin consent + scope guidance.
+Requires the Work IQ connection and user authorization described in the
+[Work IQ tool docs](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/work-iq).
+Do not reuse Fabric connection settings: connector categories, audiences and
+consent are tool-specific.
 
 #### ToolSearchTool
 
@@ -264,24 +272,16 @@ skill does not enable that unvalidated route or change the existing SDK pin.
 
 #### GuardrailTool
 
-Wires Azure Content Safety (ACS) as a server-side policy check around the
-agent's input and output, expressed as a tool the agent can invoke.
-
-```python
-from azure.ai.projects.models import GuardrailTool, PromptAgentDefinition
-
-definition = PromptAgentDefinition(
-    model="gpt-5-mini",
-    instructions="Be helpful, but always run the user message through GuardrailTool first.",
-    tools=[GuardrailTool(connection_id="<acs-connection-id>")],
-)
-```
+`GuardrailTool` is **not exported by SDK 2.4** and is not a supported
+`PromptAgentDefinition` tool in this cohort. There is no verified Preview alias.
+Configure Azure Content Safety (ACS) / service content filtering through its
+documented control plane, not an invented tool connection. An instruction
+asking the model to scan itself is not an enforced guardrail.
 
 Keep the routing decision in this skill:
 
-- Use `GuardrailTool` in `PromptAgentDefinition` when the prompt agent
-  should invoke its configured Azure Content Safety connection as a
-  server-side check.
+- Use the service's configured content-safety policies for prompt-agent
+  filtering; verify their actual enforcement separately from tool invocation.
 - Call the raw ACS API directly when application code must select
   classifiers, thresholds, and response handling itself.
 - Use [`foundry-agt`](../foundry-agt/SKILL.md#why-action-governance-matters)
@@ -305,23 +305,34 @@ A2A because its container deployed.
 
 #### BrowserAutomationTool
 
-Lets a prompt agent drive a Playwright-backed remote browser session
-(GA Nov 2026) — useful for forms, multi-page workflows, and pages that
-require interactive navigation.
+Lets a prompt agent drive a Playwright-backed remote browser session.
+This is a **preview** in the declared cohort, not a claim of future GA.
 
 ```python
-from azure.ai.projects.models import BrowserAutomationTool, PromptAgentDefinition
+from azure.ai.projects.models import (
+    BrowserAutomationPreviewTool,
+    BrowserAutomationToolConnectionParameters,
+    BrowserAutomationToolParameters,
+    PromptAgentDefinition,
+)
 
 definition = PromptAgentDefinition(
     model="gpt-5-mini",
-    instructions="When asked to fill a form, use BrowserAutomationTool.",
-    tools=[BrowserAutomationTool(connection_id="<browser-connection-id>")],
+    instructions="Inspect only the approved synthetic test page.",
+    tools=[BrowserAutomationPreviewTool(
+        browser_automation_preview=BrowserAutomationToolParameters(
+            connection=BrowserAutomationToolConnectionParameters(
+                project_connection_id="<browser-connection-id>",
+            ),
+        ),
+    )],
 )
 ```
 
-Connection setup, deterministic-page testing patterns, and Pattern 25
-soft-PASS teardown for ephemeral browser sessions are covered in the
-`foundry-browser-automation` skill (forthcoming in this catalog).
+Use the [Browser Automation setup guide](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/browser-automation)
+for the Playwright resource and project connection. Verify against an approved
+synthetic page and close the run-owned browser session; do not claim a missing
+sibling skill supplies setup or cleanup.
 
 ---
 
@@ -484,10 +495,14 @@ Supported template properties:
 
 ## 6 · Publish as an agent application
 
-After testing, publish a version to get a **stable endpoint** that can be
-shared or embedded in applications.
+**Legacy Agent Application flow.** This section applies only to an existing
+Agent Application integration. Current Foundry agents can have their own
+identity and stable agent endpoint; creating an Agent Application is no longer
+the universal publication prerequisite. See the official
+[endpoint and publishing migration guide](https://learn.microsoft.com/azure/foundry/agents/how-to/migrate-agent-applications).
+Existing applications and project-endpoint calls remain supported.
 
-Publishing is done in the **Foundry portal**:
+For a legacy integration, publishing is done in the **Foundry portal**:
 1. Open your agent in the Agents playground
 2. Select a saved version
 3. Click **Publish**
@@ -499,17 +514,28 @@ Publishing is done in the **Foundry portal**:
 > OpenAI User, etc.) to the agent application's managed identity after
 > publishing.
 
+For a new integration, inspect the actual agent's identity and endpoint using
+the current publishing guide. Legacy agents can lack a unique identity; any
+replacement/cutover needs explicit authorization and caller/tool-access checks.
+Do not delete or recreate a serving agent automatically. The SDK 2.4 examples
+here intentionally keep their existing project-endpoint invocation contract;
+they do not claim newer endpoint fields or silently upgrade the runtime.
+
 ---
 
 ## 7 · Identity & RBAC
 
-Prompt agents run under the **project identity** during development and
-under the **agent application identity** after publishing.
+Distinguish the calling identity from the identity used to access tools.
+Legacy agents can use the shared project identity; new agents can have a
+unique identity. A legacy Agent Application has a separate identity. Inspect
+the selected agent and connection's auth mode rather than inferring tool
+permissions from the caller's successful `create_version`.
 
 | Phase | Identity | RBAC needed |
 |-------|----------|-------------|
-| Development | Your user (via `az login`) | Foundry User on AI Services account |
-| Published | Agent application managed identity | Foundry User + tool-specific roles |
+| Management caller | Your user or configured workload identity | Foundry User on the approved scope |
+| Tool execution | Project, unique agent, or delegated user identity per connection | Tool-specific access and consent |
+| Legacy published application | Agent application managed identity | Application and tool-specific roles |
 
 Required role:
 - **Foundry User** (`53ca6127-db72-4b80-b1b0-d745d6d5456d`) on the
@@ -591,10 +617,11 @@ from azure.ai.projects.models import (
     FunctionTool,
     AzureAISearchTool,
     # //build 2026 additions (preview) — see § 2 "Build 2026 additions"
-    FabricIQTool,
-    WorkIQTool,
-    GuardrailTool,
-    BrowserAutomationTool,
+    FabricIQPreviewTool,
+    WorkIQPreviewTool,
+    BrowserAutomationPreviewTool,
+    BrowserAutomationToolParameters,
+    BrowserAutomationToolConnectionParameters,
 )
 ```
 
@@ -607,11 +634,11 @@ from azure.ai.projects.models import (
 | Durable tool execution or callback fallback | `foundry-mcp-aca-jobs` |
 | RAG via Knowledge Bases | `foundry-iq` |
 | Agent evaluation | `foundry-evals` |
-| MAF hosted-agent action governance (not prompt-agent GuardrailTool selection) | `foundry-agt` |
+| MAF hosted-agent action governance (not prompt-agent content filtering) | `foundry-agt` |
 | Observability & tracing | `foundry-observability` |
 | Memory across sessions | [`foundry-memory`](https://github.com/microsoft/azure-skills/blob/main/.github/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/create/references/tools/prompt-agent/tool-memory.md) |
 | Managed Toolbox and preview Prompt bridge | `foundry-toolbox` |
 | Versioned Skills and resource-aware consumers | `foundry-skill-catalog` |
 | A2A peer-agent invocation | `foundry-toolbox` (`a2a` GA 1.0 versus `a2a_preview` 0.3) |
-| Remote browser automation (BrowserAutomationTool) | `foundry-browser-automation` (forthcoming) |
-| Eval-driven prompt optimization (`azd ai agent eval/optimize/apply` loop) | `foundry-agent-optimizer` (forthcoming) |
+| Remote browser automation (SDK 2.4 preview) | [Official browser setup](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/browser-automation) |
+| Eval-driven prompt optimization | [Official optimizer workflow](https://github.com/microsoft/azure-skills/blob/main/.github/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/agent-optimizer/agent-optimizer.md) |

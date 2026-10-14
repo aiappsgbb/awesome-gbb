@@ -24,7 +24,15 @@ repaired. Host validation is syntactic only, with no DNS or service lookup.
 The approved auth inputs are forwarded only to that leg, identically in the
 initial and retry consumer steps. The Jobs bindings are unchanged. Shared
 workflow identity/project prerequisites retain their existing gates; this
-step deliberately checks only the five skill-specific standing inputs.
+step retains its existing standing-input contract. The Auth consumer additionally
+validates `MCP_AUTH_SMOKE_ISSUER` (tenant-specific Entra v2 issuer matching
+`AZURE_TENANT_ID`) and `MCP_AUTH_SMOKE_SCOPE` (one custom
+`api://<api-application-id>/<permission>`, never `.default`) before its first
+network request. This Auth-only validation lives in its canonical probe, not
+the shared native preflight or Jobs code. The two expected-value bindings already exist
+as repository secrets; forwarding them does not create or change credentials,
+applications, approvals or consent. They are empty for other matrix legs,
+including the Jobs native-preflight step.
 
 ## Interpreting a run
 
@@ -34,6 +42,12 @@ Failure returns exit 1 and exactly one sanitized classification:
 arguments produce `NATIVE_CI_PREFLIGHT=FAIL ARGUMENTS`. Output contains only
 fixed tokens and variable names, never supplied values, private hosts,
 credentials or parser exceptions.
+
+The Auth probe's additional expected-binding validation writes a FAIL marker
+with `MISSING_ENV`, `INVALID_ISSUER`, `ISSUER_TENANT_MISMATCH`,
+`INVALID_IDENTIFIER` or `INVALID_SCOPE` before any HTTP request. Tests execute
+the actual probe against missing, malformed and wrong-tenant inputs without
+network calls or value disclosure.
 
 This mandatory step has no `continue-on-error`: a failure prevents both the
 initial consumer launch and its retry. Do not retry missing or unapproved
@@ -52,16 +66,22 @@ renewed by this script.
 
 Supplying a syntactically valid endpoint does not authorize it. The explicit
 approval must come from the owner for the intended target/runner; this boolean
-does not encode approval lifetime or independently bind tenant/scope.
-No approved CI inputs are created by this change. The Jobs app client ID is
+does not encode approval lifetime. The independently supplied issuer and scope
+bind the probe's expected metadata; never derive either from its response or
+the Jobs client ID. Malformed/missing bindings fail before network access,
+without logging their values. No approved CI inputs are created by this change.
+The Jobs app client ID is
 an app-only caller prerequisite, **not delegated user consent**. Existing
 Cosmos/storage resources and documented pre-granted permissions, including
 Storage Blob Data Contributor, still require separately authorized live proof.
 
 The auth fixture's scoped PRM HTTP 200 with exact resource/tenant/scope and
 anonymous MCP initialize HTTP 401 with the correct challenge remain real
-network assertions. A canonical deterministic HTTP probe and its live runner
-execution are unresolved in #492. Offline preflight tests do not replace
+network assertions. The canonical fixture now executes a deterministic anonymous
+probe, using these existing expected-value bindings. Current-head live acceptance
+is still required; the previous `PRM_SCOPE_MISMATCH` came from an unsupported
+Jobs-ID-derived expectation and is not a backend diagnosis.
+Offline preflight tests do not replace
 those assertions or the separate
 [delegated/Playground validation record](foundry-mcp-auth-validation.md).
 Selection/dependency fanout, main/scheduled canaries and quarantine remain

@@ -264,7 +264,9 @@ or changes to existing link targets. Fixture-only edits run that fixture. Operat
 skill changes retain downstream coverage. CI orchestration-only changes run
 the native Harness and prompt-agent canaries; they do not certify deployment
 or full-catalog acceptance. Consumer runtime/authentication changes retain the
-full matrix. See [incremental CI](docs/maintenance/incremental-ci.md) for the
+full matrix except the approved exact additive Auth-only expected issuer/scope
+binding rule: it selects Auth plus normal changed consumers, never empty coverage.
+See [incremental CI](docs/maintenance/incremental-ci.md) for the
 exact selection and blocking contracts. No missing prerequisite, skipped
 required consumer, stale marker or failed cleanup becomes a passing result.
 
@@ -2313,6 +2315,12 @@ aggregation changes select the Harness and prompt-agent live canaries,
 unioned with any changed operational skills. Global configuration, consumer
 steps, unknown jobs, local-job removal and local shared credentials/outputs
 still force full.
+The narrow additive `MCP_AUTH_SMOKE_ISSUER` / `MCP_AUTH_SMOKE_SCOPE` exception
+requires both keys at the recognized native-preflight, main and retry boundaries,
+exact Auth-only conditional same-name secret values and an otherwise identical
+parsed workflow. It selects Auth plus the normal operational union; modified,
+removed, partial or differently guarded bindings still force full. It does not
+relax approval, marker, evidence or cleanup gates, or scheduled/manual coverage.
 Missing/unparseable/duplicate-key workflow YAML also forces full with a warning.
 This does not change consumer code or waive operational live evidence.
 Local gates and the exact-version driver probe must pass before consumers start.

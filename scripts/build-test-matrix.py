@@ -27,8 +27,9 @@ Sorted alphabetically for deterministic GHA matrix expansion.
     `.github/workflows/skill-test.yml` is compared structurally at base and
     HEAD. Local test edits do not trigger live work. Routing, selection,
     preflight and aggregate edits select two representative live canaries.
-    Consumer steps, shared credentials, unknown jobs, missing versions and
-    ambiguous YAML still force full. Comment-only edits change no execution.
+    The exact additive Auth-only issuer/scope binding contract selects Auth.
+    Other consumer steps, shared credentials, unknown jobs, missing versions
+    and ambiguous YAML still force full. Comment-only edits change no execution.
 
     `plugin.json`, `.github/plugin/marketplace.json`,
     `scripts/build-test-matrix.py`, and `.github/skill-deps.yml` are
@@ -77,6 +78,7 @@ Sorted alphabetically for deterministic GHA matrix expansion.
 from __future__ import annotations
 
 import argparse
+import copy
 from datetime import datetime, timezone
 import importlib.util
 import json
@@ -184,12 +186,52 @@ def _read_workflow(repo_root: Path, ref: str) -> dict:
     return workflow
 
 
+def _auth_expected_bindings_only(before: dict, after: dict) -> bool:
+    """Recognize only complete additive Auth bindings; preserve all other execution."""
+    candidate = copy.deepcopy(after)
+    before_steps = before["jobs"]["copilot-cli-matrix"].get("steps")
+    after_steps = candidate["jobs"]["copilot-cli-matrix"].get("steps")
+    if not isinstance(before_steps, list) or not isinstance(after_steps, list):
+        return False
+    if len(before_steps) != len(after_steps):
+        return False
+    boundaries = (
+        ("native-preflight", "Validate native smoke standing prerequisites"),
+        ("run", "Run consumer prompt for ${{ matrix.skill }}"),
+        ("agentops-retry", "Retry once on classified-transient failure"),
+    )
+    positions = []
+    for step_id, name in boundaries:
+        matches = [
+            index for index, step in enumerate(after_steps)
+            if isinstance(step, dict) and step.get("id") == step_id and step.get("name") == name
+        ]
+        if len(matches) != 1:
+            return False
+        index = matches[0]
+        positions.append(index)
+        old_step, new_step = before_steps[index], after_steps[index]
+        if not isinstance(old_step, dict):
+            return False
+        old_env, new_env = old_step.get("env"), new_step.get("env")
+        if not isinstance(old_env, dict) or not isinstance(new_env, dict):
+            return False
+        for key in ("MCP_AUTH_SMOKE_ISSUER", "MCP_AUTH_SMOKE_SCOPE"):
+            expected = "${{ matrix.skill == 'foundry-mcp-auth' && secrets." + key + " || '' }}"
+            if key in old_env or new_env.get(key) != expected:
+                return False
+            del new_env[key]
+    return positions == sorted(positions) and candidate == before
+
+
 def _workflow_change_scope(repo_root: Path, base_ref: str) -> str:
     try:
         before = _read_workflow(repo_root, base_ref)
         after = _read_workflow(repo_root, "HEAD")
         if before == after:
             return "none"
+        if _auth_expected_bindings_only(before, after):
+            return "auth-bindings"
         before_jobs, after_jobs = before.pop("jobs"), after.pop("jobs")
         routing_changed = (before.get("on", before.get(True)) !=
                            after.get("on", after.get(True)))
@@ -402,15 +444,17 @@ def build(
     # Force full matrix on any infra/gating-file change.
     if any(f in FORCE_FULL_MATRIX_PATHS for f in changed_files):
         return {"skill": all_fixtured}
-    canaries: set[str] = set()
+    workflow_consumers: set[str] = set()
     if WORKFLOW_PATH in changed_files:
         scope = _workflow_change_scope(repo_root, base_ref)
         if scope == "full":
             return {"skill": all_fixtured}
         if scope == "canary":
-            canaries = set(ORCHESTRATION_CANARIES)
+            workflow_consumers.update(ORCHESTRATION_CANARIES)
+        elif scope == "auth-bindings":
+            workflow_consumers.add("foundry-mcp-auth")
     if "scripts/probe-ci-driver.py" in changed_files:
-        canaries.update(ORCHESTRATION_CANARIES)
+        workflow_consumers.update(ORCHESTRATION_CANARIES)
 
     operational_files = []
     fixture_skills: set[str] = set()
@@ -428,13 +472,13 @@ def build(
     expanded.update(fixture_skills)
     if "foundry-agentops" not in changed_skills | fixture_skills:
         expanded.discard("foundry-agentops")
-    if canaries:
-        # A missing/quarantined required canary must not silently narrow coverage.
-        if not canaries <= set(all_fixtured):
-            print("::warning::Required orchestration canary unavailable; selecting the full eligible matrix.",
+    if workflow_consumers:
+        # A missing/quarantined required consumer must not silently narrow coverage.
+        if not workflow_consumers <= set(all_fixtured):
+            print("::warning::Required workflow consumer unavailable; selecting the full eligible matrix.",
                   file=sys.stderr)
             return {"skill": all_fixtured}
-        expanded.update(canaries)
+        expanded.update(workflow_consumers)
 
     # Intersect with the fixtured+non-quarantined set so we never emit
     # a name the downstream job can't actually execute.
