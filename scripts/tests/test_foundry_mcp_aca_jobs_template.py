@@ -552,9 +552,9 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("foundry-mcp-aca-jobs", producer)
         self.assertIn('version: "2.0.0"', producer)
         self.assertIn("foundry-mcp-aca-jobs", plugin["description"])
-        self.assertEqual(plugin["version"], "5.1.0")
-        self.assertEqual(marketplace["metadata"]["version"], "5.1.0")
-        self.assertEqual(marketplace["plugins"][0]["version"], "5.1.0")
+        self.assertEqual(plugin["version"], "5.2.0")
+        self.assertEqual(marketplace["metadata"]["version"], "5.2.0")
+        self.assertEqual(marketplace["plugins"][0]["version"], "5.2.0")
         self.assertIn("foundry-mcp-aca-jobs", marketplace["metadata"]["description"])
 
     def test_catalog_readme_has_one_approved_adjacent_row(self) -> None:
@@ -651,11 +651,11 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             ("issue_only", True),
             "foundry-agt remains human-only even though its validation is runnable",
         )
-        self.assertEqual(plugin["version"], "5.1.0")
+        self.assertEqual(plugin["version"], "5.2.0")
         self.assertIn("44 reusable building blocks", plugin["description"])
-        self.assertEqual(marketplace["metadata"]["version"], "5.1.0")
+        self.assertEqual(marketplace["metadata"]["version"], "5.2.0")
         self.assertIn("Source inventory: 44 skills", marketplace["metadata"]["description"])
-        self.assertEqual(marketplace["plugins"][0]["version"], "5.1.0")
+        self.assertEqual(marketplace["plugins"][0]["version"], "5.2.0")
         self.assertIn("44 reusable GBB skills", marketplace["plugins"][0]["description"])
         for description in (
             plugin["description"],

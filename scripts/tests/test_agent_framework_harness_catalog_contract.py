@@ -28,7 +28,7 @@ class AgentFrameworkHarnessCatalogContractTests(unittest.TestCase):
         )
 
         self.assertEqual(plugin["version"], "5.2.0")
-        self.assertIn("43 reusable building blocks", plugin["description"])
+        self.assertIn("44 reusable building blocks", plugin["description"])
         self.assertEqual(marketplace["metadata"]["version"], "5.2.0")
         self.assertEqual(marketplace["plugins"][0]["version"], "5.2.0")
 
