@@ -1,5 +1,20 @@
 # Changelog
 
+## 5.1.0 — Proposed / Unreleased
+
+- Add `html-presentation` **1.0.0** for evidence-backed continuous browser
+  narratives, native scrolling/chapter links and purposeful evidence explorers.
+  Distinct from general web UX (`web-experience-design`) and editable native
+  PowerPoint (`gbb-pptx`), whose content-first planning inspired the original
+  HTML-specific synthesis.
+- Include the approved supplied Azure palette/illustrations, five authentic
+  Microsoft architecture icons, accessible runtime and offline bundler/checker.
+  Preserve provenance and third-party graphics terms; MIT does not relicense them.
+- Add a lean Cowork packager: exactly 20 files (19 companions), three Light
+  illustrations, no evaluations/tests or committed generated archives.
+  Source research still requires WorkIQ, Seismic and Microsoft Learn access;
+  missing evidence is disclosed. Model evaluations remain deferred.
+
 ## Unreleased — gbb-pptx audience and delivery defaults
 
 - [`gbb-pptx`](skills/gbb-pptx/SKILL.md) MINOR **2.1.0 → 2.2.0**:

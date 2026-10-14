@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Synthetic pilot | Authoring example</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="palette.css">
+  <link rel="stylesheet" href="story.css">
+  <script src="story.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#story">Skip to story</a>
+  <div class="scroll-progress" aria-hidden="true"></div>
+  <header class="story-header">
+    <a class="wordmark" href="#opening">Synthetic pilot</a>
+    <nav class="chapter-nav" aria-label="Story chapters">
+      <a href="#opening" data-chapter-link>Context</a>
+      <a href="#evidence" data-chapter-link>Evidence</a>
+      <a href="#conclusion" data-chapter-link>Next step</a>
+    </nav>
+  </header>
+  <main id="story">
+    <section class="chapter wrap" id="opening" data-chapter aria-labelledby="thesis">
+      <p class="eyebrow">Synthetic authoring example</p>
+      <h1 id="thesis">Six of eight participants completed the pilot without help.</h1>
+      <p class="intro chapter-intro">A small workflow pilot establishes completion and timing observations.</p>
+    </section>
+    <section class="chapter wrap split" id="evidence" data-chapter aria-labelledby="evidence-title">
+      <div class="sticky-copy">
+        <p class="eyebrow">The argument</p>
+        <h2 id="evidence-title">Completion and time answer different questions.</h2>
+      </div>
+      <div>
+        <p>Eight participants tested the workflow. Median completion time was four
+          minutes; no baseline was measured, so time savings remain unestablished.</p>
+        <div class="inspector" data-inspector>
+          <div class="inspector-choices" role="group" aria-label="Choose pilot evidence">
+            <button type="button" data-inspect="completion-detail" disabled>
+              Completion: 6 of 8 without help
+            </button>
+            <button type="button" data-inspect="timing-detail" disabled>
+              Timing: 4-minute median, no baseline
+            </button>
+          </div>
+          <div class="inspector-readout" aria-live="polite" aria-atomic="true">
+            <article class="inspection" id="completion-detail" data-inspection>
+              <h3>Completion observation</h3>
+              <p>Six of eight participants completed the workflow without help.
+                The supplied fixture gives no reason for the other two outcomes.</p>
+            </article>
+            <article class="inspection" id="timing-detail" data-inspection>
+              <h3>Timing observation</h3>
+              <p>Median completion time was four minutes. No baseline was measured,
+                so this observation alone establishes neither improvement nor regression.</p>
+            </article>
+          </div>
+        </div>
+        <p class="citation"><a href="#source-pilot" data-source="source-pilot">Pilot source</a></p>
+        <details class="context">
+          <summary>Explore the completion measure</summary>
+          <p>Completion describes the observed workflow outcome. Understanding
+            why help was needed would require another observation or interview.</p>
+        </details>
+      </div>
+    </section>
+    <section class="chapter wrap" id="conclusion" data-chapter aria-labelledby="next-title">
+      <p class="eyebrow">Proposal</p>
+      <h2 id="next-title">Agree on a second pilot with a baseline.</h2>
+      <p class="intro chapter-intro">The team proposes another pilot; approval has not been supplied.
+        Measuring a comparison workflow would make a timing comparison possible.</p>
+    </section>
+  </main>
+  <div class="wrap">
+    <details class="sources-area" id="sources" open>
+      <summary>Sources and qualifications</summary>
+      <article class="source-record" id="source-pilot">
+        <h3>Synthetic authoring fixture</h3>
+        <p>These observations are supplied in <code>assets/template.html</code>:
+          eight participants, six independent completions and a four-minute
+          median with no baseline. The second pilot is proposed, with approval
+          unspecified. This is example data rather than customer evidence.</p>
+      </article>
+    </details>
+    <footer class="story-footer">Synthetic data / authoring example</footer>
+  </div>
+  <div id="status" class="status" role="status"></div>
+</body>
+</html>

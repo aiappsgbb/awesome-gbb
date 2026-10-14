@@ -1,0 +1,42 @@
+[
+  {
+    "query": "I need a five-minute HTML presentation for our product review. Eight people tested the workflow pilot; six finished without help. Please make it polished and usable offline.",
+    "should_trigger": true
+  },
+  {
+    "query": "Turn my release notes into an interactive browser-based presentation for technical collaborators, with a clear story and an architecture we can explore together.",
+    "should_trigger": true
+  },
+  {
+    "query": "Make a visual retrospective in HTML using the attached Azure palette and our local illustrations. It should work for a guided talk and later independent reading.",
+    "should_trigger": true
+  },
+  {
+    "query": "The HTML briefing at presentations/review.source.html is too wordy. Improve its editorial flow and visual balance while keeping its sources and factual caveats.",
+    "should_trigger": true
+  },
+  {
+    "query": "Create a scrollytelling presentation about the pilot results with optional evidence detail. Give me a self-contained file I can open in a browser.",
+    "should_trigger": true
+  },
+  {
+    "query": "Write a Markdown-only technical briefing on our proposed Entra ID and SQL architecture. This is a text memo for the engineering review.",
+    "should_trigger": false
+  },
+  {
+    "query": "Create an editable PowerPoint file for tomorrow's leadership review. The required deliverable is a .pptx with editable charts.",
+    "should_trigger": false
+  },
+  {
+    "query": "Polish the HTML marketing homepage for our SaaS product. Keep the pricing, signup form and existing conversion funnel intact.",
+    "should_trigger": false
+  },
+  {
+    "query": "Review the architecture diagram in this README for technical accuracy and give me comments. I only need the review.",
+    "should_trigger": false
+  },
+  {
+    "query": "Give me a quick plain-text summary of our last four weeks of work. I will paste it into an email.",
+    "should_trigger": false
+  }
+]

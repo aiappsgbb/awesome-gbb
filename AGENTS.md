@@ -3107,13 +3107,13 @@ On Copilot-mode PR check-suite success
  └─ auto-merge-copilot.yml    auto-approves + squash-merges when all gates green
 ```
 
-**Draft-inclusive source inventory (42 skills, 35 with upstream pins):**
+**Draft-inclusive source inventory (43 skills, 35 with upstream pins):**
 
 | Category | Count | Coverage |
 |----------|-------|----------|
 | Auto-tier (CI can refresh autonomously) | 30 pins | T0 + T1 + T2 in CI; credentialed pins add T3 via `--include-azure` |
 | Issue-only (human / complex deploy) | 5 pins | T0 in CI; manual live validation; managed voice also has an offline pin contract |
-| Internal IP (no pin) | 7 skills | T0 plus per-skill local checks; manual output validation |
+| Internal IP (no pin) | 8 skills | T0 plus per-skill local checks; manual output validation |
 | CI execution fixtures | 26 skills | Registered for T3: 25 Copilot-driven and 1 runner-native Harness leg; see `.github/skill-deps.yml`; registration is not a passing run |
 
 `foundry-memory` was retired from the active catalog in 5.0.0 in favor of the
@@ -3205,11 +3205,11 @@ the merged web-experience-design source and the progress-guard, copilot-doctor a
 
 | Metric | Value |
 |--------|-------|
-| Total skills | 42 |
+| Total skills | 43 |
 | Skills with upstream pins | 35 |
 | Auto-tier (CI can refresh autonomously) | 30 |
 | Issue-only (human / complex deploy) | 5 |
-| Internal IP (no upstream) | 7 |
+| Internal IP (no upstream) | 8 |
 | CI workflows | 9 |
 | Unit tests | Reported by unittest discovery in each CI run |
 | Additional doctor protocol tests | 21 synthetic tests in an isolated MCP 1.27.x environment |

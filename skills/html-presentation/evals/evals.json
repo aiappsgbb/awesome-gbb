@@ -1,0 +1,35 @@
+{
+  "skill_name": "html-presentation",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Create an offline HTML presentation for our product leadership team, five minutes, explaining a fictional workflow pilot. Supplied facts: 8 participants tested the workflow; 6 completed it without help; median completion time was 4 minutes, with no baseline measurement. The team proposes a second pilot, but it has not been approved. Use the supplied palette and local illustrations. This is synthetic data for an independent software team.",
+      "expected_output": "A portable, distinctive continuous web narrative with a complete argument, honest measurement limits, a proposed-not-approved follow-up, supplied artwork, balanced primary copy and responsive natural scrolling. The concise request should still activate the skill's visual and interaction guidance.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Make a short technical HTML architecture briefing for internal Microsoft collaborators about a proposed app that uses Microsoft Entra ID and Azure SQL Database. The architecture is a proposal, not a deployed customer solution. Consult WorkIQ, Seismic and Microsoft Learn; describe any source gaps accurately. Use authentic local product icons and the supplied Azure palette. Keep the entire path, boundaries and proposal caveat visible; let clicks explain individual nodes. Support mobile, print and offline reading.",
+      "expected_output": "A grounded continuous architecture experience with authentic labeled icons, distinct boundaries and directional flow, explicit proposal status, all three source-system consultations or honest gaps, accessible scoped node exploration and portable resources. Core facts remain visible throughout exploration.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Turn this synthetic progress update into a short HTML presentation for technical collaborators: week one defined acceptance criteria; week two tested authentication successfully with three test users; week three requested 200 capacity units but only 50 were approved; week four scheduled a load test that has not yet run. No screenshots or performance measurements exist. Use the supplied palette and local art. End with a proposed demo plan that clearly distinguishes preparation from observed results.",
+      "expected_output": "A concise continuous narrative separating tests, requests, approvals and plans, an unperformed demo labeled as such, visible qualifications, a subject-specific design device, purposeful visuals and accessible responsive exploration.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Create a short offline HTML presentation about a synthetic pilot for technical collaborators. Five people tested the workflow; four completed it independently. A repeat test is proposed. The skill is installed outside this project, and you may write only inside the presentation workspace. Use the skill's bundled palette and selected artwork. Keep editable source files alongside the portable deliverable.",
+      "expected_output": "Workspace-local copies of selected installed assets, a narrowly scoped authoring root, editable source and a self-contained HTML output. The installation remains unchanged, every rendering dependency resolves inside the authoring folder, and the observations and proposal stay qualified.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Create a draft HTML architecture presentation for internal Microsoft collaborators. The supplied proposal is browser application to Entra ID sign-in to Azure SQL storage. It has not been deployed. In this test environment, WorkIQ, Seismic and Microsoft Learn access is unavailable. Use the packaged palette and authentic local icons, and make the evidence limits visible.",
+      "expected_output": "A qualified, visibly internal draft using only the supplied proposed relationships. Each required source system's unavailability is recorded explicitly, source consultations are represented honestly, and product-specific assertions needing verification remain unresolved. The reusable assets and synthetic fixture stay separate from customer evidence.",
+      "files": []
+    }
+  ]
+}

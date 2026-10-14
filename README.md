@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-42-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-43-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -94,6 +94,9 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 > - **`ip-catalog`** — read-only MCP discovery of the GBB IP catalog.
 > - **`gbb-pptx`** — content planning and editorial review work on accessible
 >   text; PPTX generation also requires `python-pptx` in the Cowork Python sandbox.
+> - **`html-presentation`** — lean 20-file upload supports local HTML authoring
+>   when Python/filesystem access is available. Browser verification and Microsoft
+>   research still need the relevant tools; unavailable checks are disclosed.
 > - **`gbb-humanizer`** — pure prose-polish pass over `overview.html`,
 >   prep-guide, demo script, or speaker notes (text-only, no shell needed).
 >
@@ -210,6 +213,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 |-------|-------------|
 | [**web-experience-design**](skills/web-experience-design/) | **Merged source; release pending:** task-first web experiences for reports, comparisons, catalogs, tools and sites. Content and navigation before styling; meaningful icons/motion; real-content wireframes and browser task evidence. No mandatory theme, stack or external generator. [Output acceptance pending](docs/maintenance/web-experience-design-validation.md). |
 | [**gbb-pptx**](skills/gbb-pptx/) | Plan, review and generate content-first presentations: audience, storyline, evidence, storyboard and editorial checks before python-pptx rendering. Confirm audience/depth; default complete decks to cover, framing, development and closing. Optional browser-first guidance requires early export proof and explicit editability; retains native rendering, themes and notes. |
+| [**html-presentation**](skills/html-presentation/) | Evidence-backed continuous HTML presentations: native scrolling and chapter anchors, purposeful explorers, supplied Azure palette, authentic artwork and accessible offline runtime. WorkIQ, Seismic and Microsoft Learn grounding with explicit source gaps. Lean Cowork packaging; model evaluations deferred. Use web-experience-design for general web UX and gbb-pptx for editable native PowerPoint. |
 | [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
 
 ### 🧬 Org Composition & Zava Workspace
@@ -231,7 +235,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install the catalog in one command via plugin.** The proposed catalog contains 42 skills in a single [Copilot CLI plugin](plugin.json). Main includes AgentOps, delegated-auth and web-experience-design source; progress-guard, copilot-doctor and managed voice are source candidates. Installation does not certify their remaining acceptance gates:
+> **Install the catalog in one command via plugin.** The proposed catalog contains 43 skills in a single [Copilot CLI plugin](plugin.json). Main includes AgentOps, delegated-auth and web-experience-design source; progress-guard, copilot-doctor and managed voice are source candidates. The html-presentation addition has local tooling checks, not completed model evaluations. Installation does not certify remaining acceptance gates:
 >
 > ```bash
 > # Register the marketplace once:

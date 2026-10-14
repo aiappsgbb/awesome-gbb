@@ -1,0 +1,108 @@
+{
+  "palette_source": "Azure-ColorPalette-2026.pdf",
+  "original_illustration_root": "Microsoft-Azure-Illcon-Illustrations/",
+  "original_png_count": 232,
+  "note": "Selected supplied artwork is bundled; the full original collection is not included. The contributor confirmed public redistribution of the supplied palette and illustrations. Microsoft graphics retain their original rights and applicable terms; the repository MIT license does not relicense them. Preserve native colors and aspect ratios. Product icons are for architecture, training and documentation, not generic marketing logos.",
+  "assets": [
+    {
+      "path": "illustrations/Azure-Illcon-Dark-Apps-512.png",
+      "kind": "supplied-illustration",
+      "source": "Microsoft-Azure-Illcon-Illustrations/Azure-Illcon-Illustrations-Dark/512px/Azure-Illcon-Dark-Apps-512.png",
+      "sha256": "9374d325ab35405e10a35b826bc20064aa4f10db0a3a97a009728e2585548389"
+    },
+    {
+      "path": "illustrations/Azure-Illcon-Dark-Cloud-Lock-512.png",
+      "kind": "supplied-illustration",
+      "source": "Microsoft-Azure-Illcon-Illustrations/Azure-Illcon-Illustrations-Dark/512px/Azure-Illcon-Dark-Cloud-Lock-512.png",
+      "sha256": "80eb4b9173c3238d9a98ed1e8d0e4c148f7433d8cc749d7c3ee06f2143dd87f1"
+    },
+    {
+      "path": "illustrations/Azure-Illcon-Dark-Chart-Up-512.png",
+      "kind": "supplied-illustration",
+      "source": "Microsoft-Azure-Illcon-Illustrations/Azure-Illcon-Illustrations-Dark/512px/Azure-Illcon-Dark-Chart-Up-512.png",
+      "sha256": "d9a90d8b4cd76b9c7393b5a5dcc21041a81548ac7a7271dee14e1f2d9380c878"
+    },
+    {
+      "path": "illustrations/Azure-Illcon-Dark-Connectivity-512.png",
+      "kind": "supplied-illustration",
+      "source": "Microsoft-Azure-Illcon-Illustrations/Azure-Illcon-Illustrations-Dark/512px/Azure-Illcon-Dark-Connectivity-512.png",
+      "sha256": "bc13301720803bd3b1429954671c9fd65572167eb23f5b13a7ac8cd204c2f7b4"
+    },
+    {
+      "path": "illustrations/Azure-Illcon-Dark-Tools-512.png",
+      "kind": "supplied-illustration",
+      "source": "Microsoft-Azure-Illcon-Illustrations/Azure-Illcon-Illustrations-Dark/512px/Azure-Illcon-Dark-Tools-512.png",
+      "sha256": "6427edbba0cf86dc2abd02b6648a4226dd78d6e3b95af3c8cdedffb3d33b97bb"
+    },
+    {
+      "path": "illustrations/Azure-Illcon-Light-Apps-512.png",
+      "kind": "supplied-illustration",
+      "source": "Microsoft-Azure-Illcon-Illustrations/Azure-Illcon-Illustrations-Light/512px/Azure-Illcon-Light-Apps-512.png",
+      "sha256": "5d68479c931d9826870fd56f2f61150d28358b105803c220004a52cf68300678"
+    },
+    {
+      "path": "illustrations/Azure-Illcon-Light-Cloud-Lock-512.png",
+      "kind": "supplied-illustration",
+      "source": "Microsoft-Azure-Illcon-Illustrations/Azure-Illcon-Illustrations-Light/512px/Azure-Illcon-Light-Cloud-Lock-512.png",
+      "sha256": "914b8a79ed88a97cf83d609252520b4fa278c11baaf1e97f517a94ad224f3a00"
+    },
+    {
+      "path": "illustrations/Azure-Illcon-Light-Chart-Up-512.png",
+      "kind": "supplied-illustration",
+      "source": "Microsoft-Azure-Illcon-Illustrations/Azure-Illcon-Illustrations-Light/512px/Azure-Illcon-Light-Chart-Up-512.png",
+      "sha256": "6318e2c8b7fadf1d5d819e51e590b865d14017e3ee281b1b7519fe9df30fe5a3"
+    },
+    {
+      "path": "illustrations/Azure-Illcon-Light-Connectivity-512.png",
+      "kind": "supplied-illustration",
+      "source": "Microsoft-Azure-Illcon-Illustrations/Azure-Illcon-Illustrations-Light/512px/Azure-Illcon-Light-Connectivity-512.png",
+      "sha256": "0e2f22dd61382859f9860cb5a25c38e3279dc7b230bb466b823fea9966e1fd35"
+    },
+    {
+      "path": "illustrations/Azure-Illcon-Light-Tools-512.png",
+      "kind": "supplied-illustration",
+      "source": "Microsoft-Azure-Illcon-Illustrations/Azure-Illcon-Illustrations-Light/512px/Azure-Illcon-Light-Tools-512.png",
+      "sha256": "6427edbba0cf86dc2abd02b6648a4226dd78d6e3b95af3c8cdedffb3d33b97bb"
+    },
+    {
+      "path": "icons/foundry.svg",
+      "kind": "official-product-icon",
+      "source": "https://arch-center.azureedge.net/icons/Azure_Public_Service_Icons_V24.zip",
+      "archive_member": "Azure_Public_Service_Icons/Icons/ai + machine learning/035746832-icon-service-AI-Foundry.svg",
+      "terms": "https://learn.microsoft.com/en-us/azure/architecture/icons/",
+      "sha256": "fab039a771f72780ae34e59065d61c66a02d3c347d50923ef2956f34912ea02c"
+    },
+    {
+      "path": "icons/sql-database.svg",
+      "kind": "official-product-icon",
+      "source": "https://arch-center.azureedge.net/icons/Azure_Public_Service_Icons_V24.zip",
+      "archive_member": "Azure_Public_Service_Icons/Icons/databases/10130-icon-service-SQL-Database.svg",
+      "terms": "https://learn.microsoft.com/en-us/azure/architecture/icons/",
+      "sha256": "a26124a2b188ccf910520c935c726f7364e0f5935d7a4319ebcab9c80a40e475"
+    },
+    {
+      "path": "icons/ai-gateway.svg",
+      "kind": "official-product-icon",
+      "source": "https://arch-center.azureedge.net/icons/Azure_Public_Service_Icons_V24.zip",
+      "archive_member": "Azure_Public_Service_Icons/Icons/new icons/037838045-icon-service-AI-Gateway.svg",
+      "terms": "https://learn.microsoft.com/en-us/azure/architecture/icons/",
+      "sha256": "d5177fe8fb6f0950db44da663df6821357141b2717669ee6d7b7f6ddad3fe18d"
+    },
+    {
+      "path": "icons/tenant.svg",
+      "kind": "official-product-icon",
+      "source": "https://arch-center.azureedge.net/icons/Azure_Public_Service_Icons_V24.zip",
+      "archive_member": "Azure_Public_Service_Icons/Icons/identity/02679-icon-service-Tenant-Properties.svg",
+      "terms": "https://learn.microsoft.com/en-us/azure/architecture/icons/",
+      "sha256": "2ed1a99b5c3025bf4865c77fcc6b3edd1dfe9e1b068be2b8e0d8a0f8fb1133e2"
+    },
+    {
+      "path": "icons/entra-id.svg",
+      "kind": "official-product-icon",
+      "source": "https://download.microsoft.com/download/3/1/a/31a56038-856a-4489-88e4-ee5a1c4352be/Microsoft%20Entra%20architecture%20icons%20-%20Oct%202023.zip",
+      "archive_member": "Microsoft Entra architecture icons - Oct 2023/Microsoft Entra color icons SVG/Microsoft Entra ID color icon.svg",
+      "terms": "https://learn.microsoft.com/en-us/entra/architecture/architecture-icons",
+      "sha256": "efd9f54562bfb78bf3c77aecdd5fc31b61fce8a1cec78c4370b41fc470e54eda"
+    }
+  ]
+}

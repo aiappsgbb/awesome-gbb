@@ -536,8 +536,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         marketplace = json.loads((ROOT / ".github" / "plugin" / "marketplace.json").read_text(encoding="utf-8"))
 
         self.assertIn("foundry-mcp-aca-jobs", readme)
-        self.assertIn("The proposed catalog contains 42 skills", readme)
-        self.assertIn("skills-42-blue", readme)
+        self.assertIn("The proposed catalog contains 43 skills", readme)
+        self.assertIn("skills-43-blue", readme)
         self.assertIn("Merged source, not production readiness", readme)
         self.assertIn("unreleased / release PENDING", readme)
         self.assertIn(
@@ -552,9 +552,9 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("foundry-mcp-aca-jobs", producer)
         self.assertIn('version: "2.0.0"', producer)
         self.assertIn("foundry-mcp-aca-jobs", plugin["description"])
-        self.assertEqual(plugin["version"], "5.0.0")
-        self.assertEqual(marketplace["metadata"]["version"], "5.0.0")
-        self.assertEqual(marketplace["plugins"][0]["version"], "5.0.0")
+        self.assertEqual(plugin["version"], "5.1.0")
+        self.assertEqual(marketplace["metadata"]["version"], "5.1.0")
+        self.assertEqual(marketplace["plugins"][0]["version"], "5.1.0")
         self.assertIn("foundry-mcp-aca-jobs", marketplace["metadata"]["description"])
 
     def test_catalog_readme_has_one_approved_adjacent_row(self) -> None:
@@ -641,7 +641,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 len(skill_paths) - len(pin_paths),
                 len(fixture_paths),
             ),
-            (42, 35, 30, 5, 7, 26),
+            (43, 35, 30, 5, 8, 26),
         )
         self.assertEqual(
             (
@@ -651,12 +651,12 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             ("issue_only", True),
             "foundry-agt remains human-only even though its validation is runnable",
         )
-        self.assertEqual(plugin["version"], "5.0.0")
-        self.assertIn("42 reusable building blocks", plugin["description"])
-        self.assertEqual(marketplace["metadata"]["version"], "5.0.0")
-        self.assertIn("Source inventory: 42 skills", marketplace["metadata"]["description"])
-        self.assertEqual(marketplace["plugins"][0]["version"], "5.0.0")
-        self.assertIn("42 reusable GBB skills", marketplace["plugins"][0]["description"])
+        self.assertEqual(plugin["version"], "5.1.0")
+        self.assertIn("43 reusable building blocks", plugin["description"])
+        self.assertEqual(marketplace["metadata"]["version"], "5.1.0")
+        self.assertIn("Source inventory: 43 skills", marketplace["metadata"]["description"])
+        self.assertEqual(marketplace["plugins"][0]["version"], "5.1.0")
+        self.assertIn("43 reusable GBB skills", marketplace["plugins"][0]["description"])
         for description in (
             plugin["description"],
             marketplace["metadata"]["description"],
@@ -667,18 +667,18 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 self.assertIn("unpublished", description)
 
         for expected in (
-            "**Draft-inclusive source inventory (42 skills, 35 with upstream pins):**",
+            "**Draft-inclusive source inventory (43 skills, 35 with upstream pins):**",
             "| Auto-tier (CI can refresh autonomously) | 30 pins |",
             "| Issue-only (human / complex deploy) | 5 pins |",
-            "| Internal IP (no pin) | 7 skills |",
+            "| Internal IP (no pin) | 8 skills |",
             "| CI execution fixtures | 26 skills | Registered for T3",
             "registration is not a passing run",
             "Source counts include the unreleased AgentOps and delegated-auth candidates",
-            "| Total skills | 42 |",
+            "| Total skills | 43 |",
             "| Skills with upstream pins | 35 |",
             "| Auto-tier (CI can refresh autonomously) | 30 |",
             "| Issue-only (human / complex deploy) | 5 |",
-            "| Internal IP (no upstream) | 7 |",
+            "| Internal IP (no upstream) | 8 |",
         ):
             with self.subTest(expected=expected):
                 self.assertTrue(
