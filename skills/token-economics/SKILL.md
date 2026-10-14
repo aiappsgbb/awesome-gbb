@@ -15,7 +15,7 @@ description: >
   dashboards/budgets (use foundry-cost-monitoring), Foundry Toolbox tool search (use
   foundry-toolbox), hosted-agent cache breakpoints (use foundry-hosted-agents).
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Token economics
@@ -52,7 +52,7 @@ exact model, deployment type and region.
 |---|---|
 | `usage.input_tokens` | All input tokens of this inference |
 | `usage.input_tokens_details.cached_tokens` | Cache reads (discounted) |
-| `usage.input_tokens_details.cache_write_tokens` | Cache writes; GPT-5.6+ Standard only. Missing ≠ zero |
+| `usage.input_tokens_details.cache_write_tokens` | Cache writes (GPT-5.6+ Standard); a **subset** of `input_tokens`, billed at the write rate (1.25× input on current price sheets). Missing ≠ zero |
 | `usage.output_tokens` | Output including reasoning |
 | `usage.output_tokens_details.reasoning_tokens` | Hidden reasoning share of output |
 
@@ -70,7 +70,7 @@ raw `input_tokens` alone.
 | # | Lever | Typical effect | Watch out for |
 |---|---|---|---|
 | 1 | **Diet**: remove dead instructions, duplicated policy, verbose few-shots; trim tool **outputs** to the fields the model needs; paginate | Cuts `U` everywhere, every turn | Tool outputs accumulate in history on every later turn — they are often the largest line item |
-| 2 | **Defer tool definitions** with `tool_search` (gpt-5.4+) | Large catalogs: −62% money, −91% input (measured) | Small catalogs: **+44–72% money**, slower — warm eager cache wins |
+| 2 | **Defer tool definitions** with `tool_search` (gpt-5.4+) | Large catalogs: −37% to −68% money, ~−90% input, on all current families (measured) | Small catalogs with a warm cache: **+24% to +171% money** on every family — eager wins |
 | 3 | **Cache-friendly prefix**: stable instructions/tools first, variable content last, append-only history | Up to ~all of the stable prefix billed at the cached rate | ≥1,024 identical leading tokens; one-character change = miss |
 | 4 | **Reasoning effort, verbosity, `max_output_tokens`** | Cuts `O` (the expensive side) | Lower effort can reduce success; oversized `max_output_tokens` wastes TPM |
 | 5 | **Compaction** of long conversations/agent loops | Bounds `U` growth over long sessions | Opaque item; do not prune when chaining with `previous_response_id` |
@@ -100,7 +100,9 @@ rich detail in the deferred function descriptions (loaded only when needed).
 
 ### Support and failure mode (verified)
 
-- Supported on **gpt-5.4 and later** in the Responses API (Azure and OpenAI).
+- Supported on **gpt-5.4 and later** in the Responses API (Azure and OpenAI). Verified
+  live on Azure (2026-10-14): gpt-5.4, gpt-5.4-mini, gpt-5.5, gpt-5.6-terra,
+  gpt-5.6-luna, gpt-6-sol, gpt-6-luna, gpt-6.1-sol and gpt-6-astra.
 - Earlier models fail hard: `HTTP 400 — Tool 'tool_search' is not supported with
   gpt-5-mini-2025-08-07` (also observed for `gpt-4.1`). There is **no silent
   fallback** — gate the feature on the deployment's model family, do not try/except
@@ -153,72 +155,99 @@ response = client.responses.create(
    flow use an `additional_tools` input item and preserve its position.
 4. **Authorization is separate.** Deferring a tool hides its schema, not its
    existence or callability. Do not declare tools the caller is not allowed to use.
-5. **Keep always-needed tools eager.** A tool used on most turns is cheaper as an
+5. **Make required parameters honest.** Newer models (observed on gpt-6-astra and
+   gpt-6.1-sol) load the right deferred tool, then ask the user for missing required
+   fields instead of inventing them; with eager loading the same models sometimes
+   called write tools anyway. Mark only truly mandatory fields as required and treat
+   "found but asked" separately from "not found" in evals.
+6. **Keep always-needed tools eager.** A tool used on most turns is cheaper as an
    eager definition than as a search every time.
-6. **Verify the wire request through frameworks.** Agent frameworks and SDK
+7. **Verify the wire request through frameworks.** Agent frameworks and SDK
    wrappers may not serialize `namespace`, `defer_loading` or `tool_search`, or may
    drop unknown fields; deferral then silently becomes eager (or a 400). Check one
    real request or the `tool_search_call` items in the output before trusting savings.
-7. Different features: Foundry **Toolbox** tool search (`foundry-toolbox`) discovers
+8. Different features: Foundry **Toolbox** tool search (`foundry-toolbox`) discovers
    tools in a versioned Toolbox; the OpenAI **Agents API** auto-defers MCP tools.
    The rules here apply to declared tools in Responses API requests.
 
-### Measured evidence (2026-10-14, gpt-5.4, Sweden Central, Global Standard)
+### Measured evidence (2026-10-14, Sweden Central, Global Standard)
 
-Synthetic catalogs, the six [demo cases](references/demo_cases.jsonl) (different
-domains), complete tool loops, `reasoning.effort=low`, `store=False`. Money is the
-input-equivalent cost `U + c·C + r·O` with the retail gpt-5.4 Global ratios of that
-day (`c = 0.1`: $0.25 vs $2.50 per 1M cached/uncached input; `r = 6`: $15 output).
-*Independent* = each case is a fresh conversation (steady traffic on the same
-prompt prefix); *session* = the six cases are turns of one conversation.
+Synthetic catalogs (30 functions in 5 namespaces ≈ 3.4k tokens; 160 in 20 ≈ 22k),
+the six [demo cases](references/demo_cases.jsonl), complete tool loops,
+`reasoning.effort=low`, `store=False`. **Money** = input-equivalent cost
+`U + c·C + w·W + r·O` with each model's retail Global Standard short-context
+ratios that day. Values are the deferred-vs-eager **cost change** (negative = deferral
+cheaper). *Warm* = the eager prefix was already cached (steady traffic); *cold* =
+first use, the eager catalog is written to cache. *Indep.* = each case is a new
+conversation; *session* = the six cases are turns of one conversation.
 
-| Catalog (eager tokens/request) | Mode | Raw input | **Money** | Latency | Selection |
-|---|---|---|---|---|---|
-| 30 fn / 5 ns (≈3.4k) | independent | −65.8% | **+72.3%** | +56% | 6/6 both |
-| 30 fn / 5 ns | session | −12.9% | **+44.4%** | +73% | 6/6 both |
-| 160 fn / 20 ns (≈22k) | independent | −90.7% | **−61.7%** | −17% | 6/6 both |
-| 160 fn / 20 ns | session | −83.0% | **−37.2%** | −7% | 6/6 both |
+| Model | c / w / r | 30 fn warm indep. / session | 160 fn warm indep. / session | Cold indep. 30 fn / 160 fn |
+|---|---|---|---|---|
+| gpt-5.5 | 0.1 / — / 6 | +171% / +103% | +1% / −41% | +164% / −34% |
+| gpt-5.6-terra | 0.1 / 1.25 / 6 | +57% / +51% | −37% / −49% | −3% / −65% |
+| gpt-5.6-luna | 0.1 / 1.25 / 6 | +66% / +24% | −37% / −68% | +11% / −62% |
+| gpt-6-sol | 0.1 / 1.25 / 5 | +55% / +56% | −38% / −50% | −2% / −67% |
+| gpt-6-luna | 0.1 / 1.25 / 5 | +58% / +59% | −41% / −50% | +6% / −69% |
+| gpt-6.1-sol | **0.05** / 1.25 / 5 | +126% / +35% | −12% / −58% | +21%† / −66%† |
+| gpt-6-astra | 0.1 / 1.25 / 5 | +59% / +7% | −54% / −67% | −5%† / −74%† |
+| gpt-5.4 (earlier run) | 0.1 / — / 6 | +72% / +44% | −62% / −37% | — |
 
-Single-turn smokes reproduced the raw-input cut on gpt-5.4-mini (−64.7%, 30 fn).
-A deferred **MCP** server (Microsoft Learn MCP, 3 tools) cut input 9,508 → 6,878
-(−28%) with the same answer; `mcp_list_tools` still runs. Client-executed search
-worked end to end on Azure.
+`c`, `w`, `r` = cached, cache-write and output price relative to uncached input.
+Raw input fell 57–94% in every row. Tool selection was 6/6 for both variants on
+all models with the final cases. † Cold-run cases did not yet give every required
+field; on write cases gpt-6-astra and gpt-6.1-sol loaded the right tool but asked
+for the missing values instead of calling (4/6 and 5/6), which lowers deferred cost.
+Single runs, synthetic tools: treat ±10–15 points as noise.
+
+Also verified: a deferred **MCP** server (Microsoft Learn MCP, 3 tools) cut input
+9,508 → 6,878 (−28%) with the same answer on gpt-5.4; `mcp_list_tools` still runs.
+Client-executed search worked end to end.
 
 What the numbers say:
 
-- **Raw input is the wrong metric.** With a small catalog, deferral cut input by
-  two thirds but **raised cost by 44–72% and latency by 56–73%**: the eager prefix
-  was ~90% cached (billed at 10%), while deferral added search output (billed 6×)
-  and a short, rarely cached prefix.
-- With a large catalog the uncached catalog dominates and deferral wins on money,
-  TPM and latency, even when eager traffic is fully warm.
-- In sessions the loaded definitions stay in history and are re-sent every turn,
-  so savings shrink; the cache then helps both variants.
-- Searches may run twice per task (`paths`, then `query`). Selection accuracy was
-  unchanged on these synthetic cases — verify on yours.
+- **Raw input is the wrong metric.** Deferral always cut input by >55%, yet on a
+  warm small catalog it **raised cost on every model**: the eager prefix is ~98%
+  cached (billed at 5–10%), while deferral adds search output (billed 5–6×) and a
+  shorter, partly uncached prefix.
+- **Large catalogs save on every current family** (−37% to −68%) except gpt-5.5
+  in warm independent traffic (+1%): its deferred prefixes got **no** cache hits.
+  GPT-5.6+/6.x cached 5–15k tokens of the deferred prefix.
+- **Cheaper cache reads shrink the win.** gpt-6.1-sol reads cache at 0.05×, so a
+  warm 160-function eager catalog costs little and deferral saved only 12% there.
+- **Cold starts favour deferral on GPT-5.6+** because the eager catalog must first
+  be written at 1.25×: small catalogs are roughly neutral (−5% to +21%), large ones
+  save 62–74%. Bursty or per-tenant catalogs live mostly in this regime.
+- **Latency** had no consistent winner on GPT-5.6+/6.x; small catalogs were usually
+  slower deferred. Single requests occasionally took 3–6 minutes on both variants —
+  set explicit client timeouts.
+- Searches may run twice per task (`paths`, then `query`).
 
 ### Decide with your own numbers
 
 Per task, deferral pays when
 
 ```
-  T_cat · (1 − h_E·(1 − c)) · n   >   ΔO · r  +  Δcache
-  T_cat = catalog tokens removed per inference   n = inferences per task
-  h_E   = eager cache-hit ratio                   ΔO = extra output (search + reasoning)
+  T_cat · n · (1 − h_E·(1 − c))  +  T_cat · m · (w − 1)   >   ΔO · r  +  Δcache
+  T_cat  = catalog tokens removed per inference   n = inferences per task
+  h_E    = eager cache-hit ratio                   m = eager cache writes of the catalog
+  w      = cache-write ratio (1.25 on GPT-5.6+)    ΔO = extra output (search + reasoning)
   Δcache = cost of cache hits the shorter deferred prefix loses
 ```
 
-With a warm cache (`h_E ≈ 0.9`, `c = 0.1`) each removed catalog token is worth only
-≈0.19 uncached tokens, so a small `T_cat` cannot pay for search output priced at
-`r` (6–8×). Rules of thumb from the data, not guarantees:
+With a warm cache (`h_E ≈ 0.98`, `c = 0.05–0.1`) each removed catalog token is worth
+only 0.07–0.12 uncached tokens, so a small `T_cat` cannot pay for search output
+priced at `r` = 5–6×. Every cold write of the eager catalog (`m`) adds `w − 1` in
+deferral's favour. Rules of thumb from the data, not guarantees:
 
 - **Defer** when the catalog is a large share of the request (≈10k+ tokens), the tool
   set varies per user/tenant (eager cache already broken), traffic is bursty (the
   in-memory cache usually expires after 5–10 idle minutes), TPM 429s hurt, or
   selection accuracy drops with catalog size.
 - **Stay eager** for catalogs of a few thousand tokens with steady traffic, or tools
-  used on most turns. To restrict tools per turn without breaking the cache, use
-  `tool_choice: allowed_tools` (below) instead of editing the `tools` array.
+  used on most turns — on every current model family. On gpt-5.5 prefer eager unless
+  the catalog is large *and* conversations are long. To restrict tools per turn
+  without breaking the cache, use `tool_choice: allowed_tools` (below) instead of
+  editing the `tools` array.
 - Run the script with `--cases` and your real catalog and price ratios; it prints
   `input_equivalent_cost` for both variants. Then compare the eager `cached_tokens`
   ratio with **production** telemetry, not a warm benchmark loop.
@@ -236,7 +265,7 @@ python references/python/measure_tool_search.py \
   --model <gpt-5.4-or-later-deployment> \
   [--tenant <tenant-id>] [--tools-file tools.json] \
   [--cases references/demo_cases.jsonl] [--session] \
-  [--cached-ratio 0.1 --output-ratio 6]
+  [--cached-ratio 0.1 --output-ratio 6 --cache-write-ratio 1.25]
 ```
 
 - `--endpoint` also accepts a Foundry project endpoint (`…/api/projects/<p>`).
@@ -247,8 +276,14 @@ python references/python/measure_tool_search.py \
   MCP servers, plus `tool_search`). Supply `--expect-tool <name>` or `--cases`.
 - `--cases` (JSON Lines `{"prompt", "expect_tool"}`) measures selection success
   per variant; `--session` chains the cases as turns of one conversation;
-  `--cached-ratio`/`--output-ratio` (from the current price sheet) add an
+  `--cached-ratio`/`--output-ratio`/`--cache-write-ratio` (from the current price
+  sheet; write ratio 1.0 where writes are not billed separately) add an
   `input_equivalent_cost` comparison. Latency is reported as `elapsed_s`.
+- `found_not_called` counts cases where the expected tool was **loaded** by search
+  but not called — usually the model asking for missing required inputs, not a
+  discovery failure. Inspect those before calling it a selection regression.
+- Run warm **and** cold: the first run against a new catalog/deployment pays cache
+  writes on GPT-5.6+; repeated runs show steady state. Report both.
 - Exit `0` = deferred variant called every expected tool, `1` = it missed one
   (selection regression), `2` = API/config/input error (e.g. the HTTP 400 above).
 - Run each variant several times and report distributions. There is no usable
@@ -263,7 +298,13 @@ consistent `prompt_cache_key` per shared prefix (≈15 rpm per prefix+key before
 misses; partition hot prefixes across keys). Structured-output schemas and tool
 definitions are part of the cached prefix — keep their order deterministic. GPT-5.6+
 adds billable cache writes and explicit breakpoints (`prompt_cache_options`,
-`prompt_cache_breakpoint`); earlier models return HTTP 400 for those fields. Details:
+`prompt_cache_breakpoint`); earlier models return HTTP 400 for those fields.
+Measured on gpt-5.6-luna and gpt-6-luna with a new 2k-token prefix: the default
+`implicit` mode wrote 2,009 tokens on first use, then **re-wrote the latest message
+on every request** (11 tokens here); `explicit` mode with a breakpoint after the stable
+prefix wrote once (1,995) and then only read. For long, variable user turns the
+implicit per-request write is billed at 1.25× — prefer explicit breakpoints once the
+stable boundary is known. Details:
 [prompt caching][caching] and `foundry-hosted-agents` `references/prompt-caching.md`.
 
 **Restrict tools per turn without breaking the cache.** Keep the full `tools`
