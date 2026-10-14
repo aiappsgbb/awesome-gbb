@@ -1,5 +1,20 @@
 # Changelog
 
+## 5.2.0 — Unreleased — token-economics
+
+- Add [`token-economics`](skills/token-economics/SKILL.md) **1.0.0**: an ordered
+  optimization ladder for cost per successful task, TPM and context size, with a
+  deep section on Responses API deferred tool loading (`tool_search`,
+  `defer_loading`, namespaces; gpt-5.4+). Ships a canonical eager-vs-deferred
+  measurement script, an offline pin contract and a Copilot-CLI fixture on the
+  shared `gpt-5.4-mini` deployment.
+- Live evidence (2026-10-14): −64.7% (gpt-5.4-mini) and −65.7% (gpt-5.4) input on
+  a 30-function catalog, about −85% at 160 functions; HTTP 400 on gpt-5-mini and
+  gpt-4.1. Warm eager caches can still be cheaper in money; the skill documents
+  the break-even.
+- Inventory becomes **44 skills**, **36 upstream pins** (31 auto-tier) and
+  **27 registered fixtures**. Plugin and marketplace **5.1.0 → 5.2.0**.
+
 ## 5.1.0 — Proposed / Unreleased
 
 - Add `html-presentation` **1.0.0** for evidence-backed continuous browser
