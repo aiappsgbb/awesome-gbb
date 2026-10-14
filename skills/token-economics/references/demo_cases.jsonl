@@ -1,0 +1,6 @@
+{"prompt": "Use the shipping tools to get the delivery ETA record for shipment SHP-42 (field_0=SHP-42). Call the tool; do not answer from memory.", "expect_tool": "get_shipping_record"}
+{"prompt": "Now list the billing records (invoices) for customer C-7 (field_0=C-7). Call the tool.", "expect_tool": "list_billing_record"}
+{"prompt": "Update the CRM record for customer C-7: set field_0=C-7 and field_1=gold-tier. Call the tool.", "expect_tool": "update_crm_record"}
+{"prompt": "Search inventory for product SKU-9 availability (field_0=SKU-9). Call the tool.", "expect_tool": "search_inventory_record"}
+{"prompt": "Get the HR record with the leave balance for employee E-12 (field_0=E-12). Call the tool.", "expect_tool": "get_hr_record"}
+{"prompt": "Create a shipping return record for shipment SHP-42 (field_0=SHP-42, field_1=return). Call the tool.", "expect_tool": "create_shipping_record"}

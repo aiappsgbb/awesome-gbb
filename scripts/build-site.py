@@ -66,7 +66,7 @@ CATEGORIES: dict[str, list[str]] = {
         'azure-backup-readiness', 'azure-resource-diagnostics',
         'foundry-cost-monitoring', 'foundry-network-runbook',
         'gbb-humanizer',
-        'ghcp-cli-config', 'copilot-doctor', 'paygo-ptu-cost-analyzer', 'progress-guard',
+        'ghcp-cli-config', 'copilot-doctor', 'paygo-ptu-cost-analyzer', 'token-economics', 'progress-guard',
     ],
     '🛡️ Governance': [
         'citadel-hub-deploy', 'citadel-spoke-onboarding', 'foundry-agt',
