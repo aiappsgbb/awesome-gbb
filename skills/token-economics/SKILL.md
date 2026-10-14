@@ -1,16 +1,17 @@
 ---
 name: token-economics
 description: >
-  Reduce LLM token cost, TPM pressure and context size for Responses API apps and agents
-  without degrading task success. Ordered optimization ladder: prompt/tool-output diet,
-  deferred tool loading with tool_search + defer_loading (gpt-5.4+), prompt-cache prefix
-  design, reasoning effort/verbosity/max_output_tokens, compaction, model right-sizing,
-  Flex/Batch/Priority tiers. Live-measured eager-vs-deferred script and cache break-even
-  math. USE FOR: token economics, token optimization, reduce token usage, LLM cost
-  optimization, tool_search, defer_loading, deferred tools, tool namespaces, too many
-  tools, large MCP catalog, prompt caching hit rate, cached_tokens, TPM 429 from large
-  prompts, reasoning effort cost, context compaction, flex processing, cost per task.
-  DO NOT USE FOR: PAYG-vs-PTU sizing (use paygo-ptu-cost-analyzer), Foundry spend
+  Reduce cost per successful task, TPM pressure and context size for Responses API
+  apps and agents. Ordered ladder: prompt/tool-output diet, deferred tool loading with
+  tool_search + defer_loading (gpt-5.4+), cache-friendly prefixes, allowed_tools,
+  reasoning effort/verbosity/max_output_tokens, compaction, model right-sizing,
+  Flex/Batch/Priority. Live-measured script compares eager vs deferred cost, latency
+  and tool selection; shows when deferral loses to a warm cache. USE FOR: token
+  economics, token optimization, reduce token usage, LLM cost,
+  tool_search, defer_loading, deferred tools, tool namespaces, too many tools, large
+  MCP catalog, prompt caching hit rate, cached_tokens, TPM 429 from large prompts,
+  reasoning effort cost, context compaction, flex processing. DO NOT
+  USE FOR: PAYG-vs-PTU sizing (use paygo-ptu-cost-analyzer), Foundry spend
   dashboards/budgets (use foundry-cost-monitoring), Foundry Toolbox tool search (use
   foundry-toolbox), hosted-agent cache breakpoints (use foundry-hosted-agents).
 metadata:
@@ -39,7 +40,7 @@ Three independent budgets are in play, and levers trade them against each other:
 | Budget | Driven by | Notes |
 |---|---|---|
 | **Money** | `U`, `C`, `W`, `O` × current rates | Cached input is discounted, not free. Output is several times the input price on most models. |
-| **Throughput (TPM/429s)** | Total tokens per minute | Treat TPM headroom as driven by total input, cached or not, plus the output reservation. Azure and OpenAI count `max_output_tokens` against the limit at admission, even if fewer tokens are generated ([source][ratelimits]). |
+| **Throughput (TPM/429s)** | Total tokens per minute | Treat TPM headroom as driven by total input, cached or not, plus the output reservation. Azure's admission estimate counts `max_tokens`/`max_output_tokens` in full, even if fewer tokens are generated ([source][az429]). |
 | **Context window / latency** | Total input + reasoning | Large tool catalogs and histories raise time-to-first-token and can reduce tool-selection accuracy. |
 
 Never hardcode prices. Use the current [Azure OpenAI pricing][pricing] for the
@@ -63,11 +64,13 @@ dashboards use `foundry-cost-monitoring`.
 ## The optimization ladder
 
 Work top-down. Earlier rungs are cheaper to adopt and rarely reduce quality.
+Judge every rung by cost per successful task (money **and** latency), never by
+raw `input_tokens` alone.
 
 | # | Lever | Typical effect | Watch out for |
 |---|---|---|---|
 | 1 | **Diet**: remove dead instructions, duplicated policy, verbose few-shots; trim tool **outputs** to the fields the model needs; paginate | Cuts `U` everywhere, every turn | Tool outputs accumulate in history on every later turn — they are often the largest line item |
-| 2 | **Defer tool definitions** with `tool_search` (gpt-5.4+) | −65% to −85% input in the measurements below | Can lose to a *warm* eager cache on money; see break-even |
+| 2 | **Defer tool definitions** with `tool_search` (gpt-5.4+) | Large catalogs: −62% money, −91% input (measured) | Small catalogs: **+44–72% money**, slower — warm eager cache wins |
 | 3 | **Cache-friendly prefix**: stable instructions/tools first, variable content last, append-only history | Up to ~all of the stable prefix billed at the cached rate | ≥1,024 identical leading tokens; one-character change = miss |
 | 4 | **Reasoning effort, verbosity, `max_output_tokens`** | Cuts `O` (the expensive side) | Lower effort can reduce success; oversized `max_output_tokens` wastes TPM |
 | 5 | **Compaction** of long conversations/agent loops | Bounds `U` growth over long sessions | Opaque item; do not prune when chaining with `previous_response_id` |
@@ -102,6 +105,8 @@ rich detail in the deferred function descriptions (loaded only when needed).
   gpt-5-mini-2025-08-07` (also observed for `gpt-4.1`). There is **no silent
   fallback** — gate the feature on the deployment's model family, do not try/except
   into a different tool list at runtime without logging it.
+- Verified on Azure: hosted search over namespaces, deferred MCP servers
+  (`"type": "mcp"` + `defer_loading: true`) and client-executed search.
 - `defer_loading` on a namespace member applies to the function, not the namespace.
   A namespace may mix eager (always callable) and deferred functions.
 
@@ -150,52 +155,73 @@ response = client.responses.create(
    existence or callability. Do not declare tools the caller is not allowed to use.
 5. **Keep always-needed tools eager.** A tool used on most turns is cheaper as an
    eager definition than as a search every time.
-6. Different features: Foundry **Toolbox** tool search (`foundry-toolbox`) discovers
+6. **Verify the wire request through frameworks.** Agent frameworks and SDK
+   wrappers may not serialize `namespace`, `defer_loading` or `tool_search`, or may
+   drop unknown fields; deferral then silently becomes eager (or a 400). Check one
+   real request or the `tool_search_call` items in the output before trusting savings.
+7. Different features: Foundry **Toolbox** tool search (`foundry-toolbox`) discovers
    tools in a versioned Toolbox; the OpenAI **Agents API** auto-defers MCP tools.
    The rules here apply to declared tools in Responses API requests.
 
-### Measured evidence (2026-10-14, Sweden Central, Global Standard)
+### Measured evidence (2026-10-14, gpt-5.4, Sweden Central, Global Standard)
 
-Synthetic catalog; one complete tool turn = first inference + follow-up after a
-synthetic function output; `reasoning.effort=low`, `store=False`. Values are
-`input / cached` tokens per inference. The deferred model loaded only `shipping`.
+Synthetic catalogs, the six [demo cases](references/demo_cases.jsonl) (different
+domains), complete tool loops, `reasoning.effort=low`, `store=False`. Money is the
+input-equivalent cost `U + c·C + r·O` with the retail gpt-5.4 Global ratios of that
+day (`c = 0.1`: $0.25 vs $2.50 per 1M cached/uncached input; `r = 6`: $15 output).
+*Independent* = each case is a fresh conversation (steady traffic on the same
+prompt prefix); *session* = the six cases are turns of one conversation.
 
-| Model | Catalog | Eager | Deferred | Raw input change |
-|---|---|---|---|---|
-| gpt-5.4-mini | 30 fn / 5 ns | 5,041/4,864 → 5,157/4,864 | 1,684/0 → 1,920/0 | **−64.7%** (+152 output) |
-| gpt-5.4 | 30 fn / 5 ns | 5,041/0 → 5,142/4,992 | 1,682/0 → 1,814/0 | **−65.7%** (+61 output) |
-| gpt-5.4 | 160 fn / 20 ns | 27,190/0 → 27,286/27,136 (cold); 27,190/27,008 → 27,294/27,136 (warm) | 4,033–4,058/0 → 4,127–4,206/0–1,024 | **−85%** (+70–200 output) |
+| Catalog (eager tokens/request) | Mode | Raw input | **Money** | Latency | Selection |
+|---|---|---|---|---|---|
+| 30 fn / 5 ns (≈3.4k) | independent | −65.8% | **+72.3%** | +56% | 6/6 both |
+| 30 fn / 5 ns | session | −12.9% | **+44.4%** | +73% | 6/6 both |
+| 160 fn / 20 ns (≈22k) | independent | −90.7% | **−61.7%** | −17% | 6/6 both |
+| 160 fn / 20 ns | session | −83.0% | **−37.2%** | −7% | 6/6 both |
 
-Observations to plan around:
+Single-turn smokes reproduced the raw-input cut on gpt-5.4-mini (−64.7%, 30 fn).
+A deferred **MCP** server (Microsoft Learn MCP, 3 tools) cut input 9,508 → 6,878
+(−28%) with the same answer; `mcp_list_tools` still runs. Client-executed search
+worked end to end on Azure.
 
-- Deferred requests add **output** (the search step plus extra reasoning) — this is
-  the expensive token class. Searches may run twice (e.g. `paths` + `query`).
-- The eager prefix cached reliably once warm; the shorter deferred prefix cached
-  only intermittently. Cache hits are best-effort, never guaranteed.
+What the numbers say:
 
-### Break-even: when deferring saves money
+- **Raw input is the wrong metric.** With a small catalog, deferral cut input by
+  two thirds but **raised cost by 44–72% and latency by 56–73%**: the eager prefix
+  was ~90% cached (billed at 10%), while deferral added search output (billed 6×)
+  and a short, rarely cached prefix.
+- With a large catalog the uncached catalog dominates and deferral wins on money,
+  TPM and latency, even when eager traffic is fully warm.
+- In sessions the loaded definitions stay in history and are re-sent every turn,
+  so savings shrink; the cache then helps both variants.
+- Searches may run twice per task (`paths`, then `query`). Selection accuracy was
+  unchanged on these synthetic cases — verify on yours.
 
-With `c = p_cached / p_in`, `r = p_out / p_in`, eager per-task input-equivalent cost
-`E(h) = E_in·(1 − h·(1 − c)) + r·E_out` for an eager cache-hit ratio `h`, and
-deferred cost `D = D_U + c·D_C + r·D_out`, deferring saves money when
-`h < (E_in + r·E_out − D) / (E_in·(1 − c))` (i.e. `E(h) > D`).
+### Decide with your own numbers
 
-Worked example, 160-function row with **illustrative** ratios `c = 0.1`, `r = 8`
-(replace with your current rates): eager with no cache hits ≈ 55.2k, eager fully
-warm ≈ 6.5k, deferred ≈ 9.5k input-equivalent per task. Deferred wins on money only
-below an eager hit ratio of roughly **93%**; it always wins on TPM (≈54k → ≈8k
-input tokens per task) and context size.
+Per task, deferral pays when
 
-Interpretation:
+```
+  T_cat · (1 − h_E·(1 − c)) · n   >   ΔO · r  +  Δcache
+  T_cat = catalog tokens removed per inference   n = inferences per task
+  h_E   = eager cache-hit ratio                   ΔO = extra output (search + reasoning)
+  Δcache = cost of cache hits the shorter deferred prefix loses
+```
 
-- **Defer** when the catalog is large relative to the rest of the prompt, the tool set
-  varies by user/tenant (which already breaks the eager cache), traffic is bursty or
-  low-volume (in-memory cache typically expires after 5–10 minutes idle), you hit TPM
-  429s, or tool-selection accuracy drops with catalog size.
-- **Stay eager** for small catalogs, tools used on most turns, or a single static
-  catalog with steady high-volume traffic and measured hit ratios above break-even.
-- Raising cache retention (`prompt_cache_retention: "24h"` on supported pre-5.6
-  models, extended by default on gpt-5.5) raises `h` and moves break-even — measure.
+With a warm cache (`h_E ≈ 0.9`, `c = 0.1`) each removed catalog token is worth only
+≈0.19 uncached tokens, so a small `T_cat` cannot pay for search output priced at
+`r` (6–8×). Rules of thumb from the data, not guarantees:
+
+- **Defer** when the catalog is a large share of the request (≈10k+ tokens), the tool
+  set varies per user/tenant (eager cache already broken), traffic is bursty (the
+  in-memory cache usually expires after 5–10 idle minutes), TPM 429s hurt, or
+  selection accuracy drops with catalog size.
+- **Stay eager** for catalogs of a few thousand tokens with steady traffic, or tools
+  used on most turns. To restrict tools per turn without breaking the cache, use
+  `tool_choice: allowed_tools` (below) instead of editing the `tools` array.
+- Run the script with `--cases` and your real catalog and price ratios; it prints
+  `input_equivalent_cost` for both variants. Then compare the eager `cached_tokens`
+  ratio with **production** telemetry, not a warm benchmark loop.
 
 ## Measure before and after
 
@@ -208,7 +234,9 @@ pip install "openai>=3.26,<4" "azure-identity>=1.25,<2"
 python references/python/measure_tool_search.py \
   --endpoint https://<resource>.openai.azure.com \
   --model <gpt-5.4-or-later-deployment> \
-  [--tenant <tenant-id>] [--tools-file tools.json --expect-tool <name> --prompt "..."]
+  [--tenant <tenant-id>] [--tools-file tools.json] \
+  [--cases references/demo_cases.jsonl] [--session] \
+  [--cached-ratio 0.1 --output-ratio 6]
 ```
 
 - `--endpoint` also accepts a Foundry project endpoint (`…/api/projects/<p>`).
@@ -216,11 +244,17 @@ python references/python/measure_tool_search.py \
   `https://ai.azure.com/.default`.
 - `--tools-file` takes your real catalog (a JSON array of Responses tools) and
   derives the deferred variant (`defer_loading` on functions, namespace members and
-  MCP servers, plus `tool_search`). `--expect-tool` is then required.
-- Exit `0` = deferred variant called the expected tool, `1` = it did not (selection
-  regression), `2` = API/config error (e.g. the HTTP 400 above).
-- Run each variant several times; report distributions and the eager cache-hit ratio
-  of **production** traffic, not of a warm benchmark loop.
+  MCP servers, plus `tool_search`). Supply `--expect-tool <name>` or `--cases`.
+- `--cases` (JSON Lines `{"prompt", "expect_tool"}`) measures selection success
+  per variant; `--session` chains the cases as turns of one conversation;
+  `--cached-ratio`/`--output-ratio` (from the current price sheet) add an
+  `input_equivalent_cost` comparison. Latency is reported as `elapsed_s`.
+- Exit `0` = deferred variant called every expected tool, `1` = it missed one
+  (selection regression), `2` = API/config/input error (e.g. the HTTP 400 above).
+- Run each variant several times and report distributions. There is no usable
+  pre-flight token counter on Azure: `responses.input_tokens.count` returned HTTP
+  400 (`This model is not supported by Responses API`) for gpt-5.4, gpt-5.4-mini
+  and gpt-5-mini — measure with real `usage`.
 
 ## Other levers (concise)
 
@@ -232,10 +266,28 @@ adds billable cache writes and explicit breakpoints (`prompt_cache_options`,
 `prompt_cache_breakpoint`); earlier models return HTTP 400 for those fields. Details:
 [prompt caching][caching] and `foundry-hosted-agents` `references/prompt-caching.md`.
 
+**Restrict tools per turn without breaking the cache.** Keep the full `tools`
+array stable and pass `tool_choice={"type": "allowed_tools", "mode": "auto",
+"tools": [{"type": "function", "name": "..."}]}`. Measured on gpt-5.4: a different
+allowed subset on the next request still read 4,736 of 4,899 input tokens from cache.
+It accepts top-level functions only — namespace members and namespaces were rejected
+with HTTP 400 — so it complements, not combines with, namespaced deferral.
+
+**Fewer round trips.** Every inference re-sends the whole prefix and history. Let
+independent tool calls run in parallel (`parallel_tool_calls`, default true), return
+compact tool results, cap built-in tool loops (`max_tool_calls`), limit retrieval
+results, and use `detail: "low"` for images that do not need fine detail.
+
+**Server-side state is not a token discount.** `previous_response_id` and stored
+conversations save bandwidth and code, but all prior input in the chain is still
+billed as input ([source][convstate]). Only caching, compaction and smaller context
+reduce the bill.
+
 **Reasoning and output.** `reasoning={"effort": ...}` (allowed values vary by model —
 check the [reasoning models table][reasoning]); `text={"verbosity": "low"}` for terse
-answers; set `max_output_tokens` close to the real need because it is reserved
-against TPM. For classification/extraction try the lowest supported effort first
+answers; set `max_output_tokens` close to the real need: Azure's admission estimate
+counts it in full against TPM, and rejected (400) requests can count too
+([source][az429]). For classification/extraction try the lowest supported effort first
 and accept only if evals hold.
 
 **Compaction.** Server-side: `context_management=[{"type": "compaction",
@@ -254,7 +306,11 @@ See [Flex processing][flex]. PTU vs PAYG economics: `paygo-ptu-cost-analyzer`.
 
 - Padding prompts to reach the 1,024-token caching threshold.
 - Judging a lever by one request's `input_tokens` instead of cost per successful task.
-- Assuming `tool_search` always saves money: it can lose to a warm static cache.
+- Assuming `tool_search` always saves money: on a small, warm catalog it measured
+  +44–72% cost and slower turns.
+- Editing the `tools` array per turn to restrict tools (breaks the cache) instead
+  of `allowed_tools`.
+- Believing `previous_response_id` makes earlier turns free.
 - Enabling `tool_search` on a pre-5.4 deployment and catching the 400 silently.
 - Injecting timestamps, request IDs or per-user data at the top of instructions.
 - Dumping full API payloads as tool outputs; they are re-sent on every later turn.
@@ -262,7 +318,8 @@ See [Flex processing][flex]. PTU vs PAYG economics: `paygo-ptu-cost-analyzer`.
 - Logging prompts or tool payloads to diagnose cost.
 
 [pricing]: https://azure.microsoft.com/pricing/details/cognitive-services/openai-service/
-[ratelimits]: https://learn.microsoft.com/microsoft-cloud/dev/dev-proxy/concepts/llm-rate-limits
+[az429]: https://learn.microsoft.com/microsoft-cloud/dev/dev-proxy/concepts/azure-openai-429-token-rate-limit
+[convstate]: https://developers.openai.com/api/docs/guides/conversation-state
 [az-toolsearch]: https://learn.microsoft.com/azure/foundry/openai/how-to/tool-search
 [oai-toolsearch]: https://developers.openai.com/api/docs/guides/tools-tool-search
 [caching]: https://learn.microsoft.com/azure/foundry/openai/how-to/prompt-caching

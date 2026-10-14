@@ -8,10 +8,11 @@
   `defer_loading`, namespaces; gpt-5.4+). Ships a canonical eager-vs-deferred
   measurement script, an offline pin contract and a Copilot-CLI fixture on the
   shared `gpt-5.4-mini` deployment.
-- Live evidence (2026-10-14): −64.7% (gpt-5.4-mini) and −65.7% (gpt-5.4) input on
-  a 30-function catalog, about −85% at 160 functions; HTTP 400 on gpt-5-mini and
-  gpt-4.1. Warm eager caches can still be cheaper in money; the skill documents
-  the break-even.
+- Live evidence (2026-10-14, gpt-5.4, retail price ratios): deferral cut
+  input-equivalent cost −62% (independent) / −37% (session) on 160 functions but
+  raised it +72% / +44% on a warm 30-function catalog, with slower turns; tool
+  selection 6/6 in all cases. Deferred MCP, client-executed search and
+  cache-preserving `allowed_tools` verified; HTTP 400 on gpt-5-mini and gpt-4.1.
 - Inventory becomes **44 skills**, **36 upstream pins** (31 auto-tier) and
   **27 registered fixtures**. Plugin and marketplace **5.1.0 → 5.2.0**.
 

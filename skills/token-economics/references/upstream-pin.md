@@ -46,14 +46,33 @@ known_issues:
     status: documented
     notes: Documented in SKILL.md § Support and failure mode (verified).
   - id: KI-002
-    title: "Deferred prefixes cache less reliably than large eager prefixes"
+    title: "Deferral can cost more than a warm eager cache on small catalogs"
     description: |
-      In live runs the short deferred prefix produced cache reads only
-      intermittently, while the eager tool catalog cached reliably once warm.
-      Money savings therefore depend on the eager cache-hit ratio.
+      gpt-5.4, 30 functions (~3.4k tokens), six cases: raw input -66% but
+      input-equivalent cost +72% (independent) / +44% (session) and slower
+      turns, because the eager prefix was ~90% cached and search adds output.
+      160 functions: -62% / -37% cost. Re-measure when cache pricing changes.
     upstream_url: null
     status: documented
-    notes: Documented in SKILL.md § Break-even.
+    notes: Documented in SKILL.md § Measured evidence and § Decide with your own numbers.
+  - id: KI-003
+    title: "responses.input_tokens.count returns HTTP 400 on Azure"
+    description: |
+      "This model is not supported by Responses API" for gpt-5.4,
+      gpt-5.4-mini and gpt-5-mini deployments (2026-10-14). Measure with
+      real usage instead of a pre-flight counter.
+    upstream_url: null
+    status: documented
+    notes: Documented in SKILL.md § Measure before and after.
+  - id: KI-004
+    title: "allowed_tools rejects namespace members and namespaces"
+    description: |
+      tool_choice allowed_tools accepts top-level functions only; a namespaced
+      function is "not found" and a namespace entry or a namespace field is
+      rejected with HTTP 400. Changing the allowed subset kept cache reads.
+    upstream_url: null
+    status: documented
+    notes: Documented in SKILL.md § Other levers.
 
 validation:
   requires:
@@ -79,11 +98,14 @@ validation:
     assert m.openai_base_url('https://a.services.ai.azure.com/api/projects/p') == 'https://a.services.ai.azure.com/openai/v1/'
     assert m.openai_base_url('https://a.openai.azure.com/') == 'https://a.openai.azure.com/openai/v1/'
     print('contract ok: endpoint normalization')
+    assert m.input_equivalent({'input_tokens': 1000, 'cached_tokens': 800, 'output_tokens': 10}, 0.1, 6) == 340.0
+    print('contract ok: input-equivalent cost')
     "
   expected_output:
     - "import ok: measure_tool_search"
     - "contract ok: namespace members deferred, tool_search appended, input untouched"
     - "contract ok: endpoint normalization"
+    - "contract ok: input-equivalent cost"
 
 last_validated: 2026-10-14
 validated_by: ricchi
@@ -100,4 +122,9 @@ validated_by: ricchi
   - gpt-5.4 (2026-03-05), 30 functions: −65.7% input; 160 functions /
     20 namespaces: about −85% input per complete tool turn.
   - gpt-5-mini and gpt-4.1: HTTP 400 (KI-001), script exit code 2.
+- Adversarial review pass (same day): multi-case/session measurement on
+  gpt-5.4 with retail ratios c=0.1, r=6 showed deferral +72%/+44% cost on
+  30 functions and -62%/-37% on 160 functions (KI-002); deferred MCP
+  (-28% input), client-executed search, allowed_tools cache retention
+  (KI-004) and the Azure token-count 400 (KI-003) were verified live.
 - No Azure resources were created; existing deployments were used.

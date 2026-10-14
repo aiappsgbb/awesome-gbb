@@ -15,10 +15,17 @@ Usage (Entra ID; the identity needs Cognitive Services OpenAI User):
 
     python measure_tool_search.py --endpoint https://<resource>.openai.azure.com \
         --model <gpt-5.4-or-later-deployment> [--tenant <tenant-id>] \
-        [--tools-file my_tools.json --prompt "..." --expect-tool <name>]
+        [--tools-file my_tools.json (--expect-tool <name> | --cases cases.jsonl)]
+        [--session] [--cached-ratio 0.1 --output-ratio 8]
 
-Exit codes: 0 = deferred variant called the expected tool; 1 = it did not;
-2 = configuration/API error (for example HTTP 400 on a pre-gpt-5.4 model).
+Multi-case mode: ``--cases cases.jsonl`` (one {"prompt", "expect_tool"} per
+line) reports tool-selection success per variant; ``--session`` chains the
+cases as turns of one conversation to observe caching across a session.
+``--cached-ratio``/``--output-ratio`` add an input-equivalent cost estimate.
+
+Exit codes: 0 = deferred variant called every expected tool; 1 = it missed at
+least one (selection regression); 2 = configuration/API/input error (for
+example HTTP 400 on a pre-gpt-5.4 model).
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ import copy
 import json
 import os
 import sys
+import time
 from typing import Any
 
 from azure.identity import AzureCliCredential, DefaultAzureCredential, get_bearer_token_provider
@@ -122,8 +130,15 @@ def _usage(response: Any) -> dict[str, int]:
     }
 
 
-def run_turn(client: OpenAI, model: str, prompt: str, tools: list[dict[str, Any]], effort: str) -> dict[str, Any]:
-    """Run one complete tool turn statelessly (store=False) and return per-inference usage."""
+def run_case(
+    client: OpenAI, model: str, history: list[Any], prompt: str, tools: list[dict[str, Any]], effort: str,
+    max_inferences: int = 6,
+) -> dict[str, Any]:
+    """Append one user turn to ``history`` and run the tool loop statelessly (store=False).
+
+    Every function call receives a synthetic output, so the loop measures the
+    complete turn: discovery, call(s) and the final answer.
+    """
     common = {
         "model": model,
         "tools": tools,
@@ -132,41 +147,94 @@ def run_turn(client: OpenAI, model: str, prompt: str, tools: list[dict[str, Any]
         "store": False,
         "include": ["reasoning.encrypted_content"],
     }
-    history: list[Any] = [{"role": "user", "content": prompt}]
-    first = client.responses.create(input=history, **common)
-    inferences = [_usage(first)]
-    calls = [o for o in first.output if o.type == "function_call"]
-    searched = [o.arguments for o in first.output if o.type == "tool_search_call"]
-
-    if calls:
-        history += [o.model_dump(exclude_none=True) for o in first.output]
+    history.append({"role": "user", "content": prompt})
+    inferences, called, searched = [], [], []
+    started = time.perf_counter()
+    for _ in range(max_inferences):
+        response = client.responses.create(input=history, **common)
+        inferences.append(_usage(response))
+        history += [o.model_dump(exclude_none=True) for o in response.output]
+        searched += [o.arguments for o in response.output if o.type == "tool_search_call"]
+        calls = [o for o in response.output if o.type == "function_call"]
+        if not calls:
+            break
+        called += [c.name for c in calls]
         history += [
-            {"type": "function_call_output", "call_id": c.call_id, "output": json.dumps({"status": "ok", "eta": "synthetic"})}
+            {"type": "function_call_output", "call_id": c.call_id, "output": json.dumps({"status": "ok", "data": "synthetic"})}
             for c in calls
         ]
-        second = client.responses.create(input=history, **common)
-        inferences.append(_usage(second))
-
-    totals = {k: sum(i[k] for i in inferences) for k in inferences[0]}
     return {
         "inferences": inferences,
-        "totals": totals,
-        "called_tools": [c.name for c in calls],
+        "called_tools": called,
         "tool_search_arguments": searched,
+        "elapsed_s": round(time.perf_counter() - started, 2),
     }
 
 
-def compare(client: OpenAI, model: str, tools: list[dict[str, Any]], prompt: str, effort: str = "low") -> dict[str, Any]:
-    eager = run_turn(client, model, prompt, tools, effort)
-    deferred = run_turn(client, model, prompt, to_deferred(tools), effort)
-    e_in, d_in = eager["totals"]["input_tokens"], deferred["totals"]["input_tokens"]
+def run_variant(
+    client: OpenAI, model: str, cases: list[dict[str, str]], tools: list[dict[str, Any]], effort: str, session: bool,
+) -> dict[str, Any]:
+    """Run all cases; ``session=True`` chains them as successive turns of one conversation."""
+    history: list[Any] = []
+    results = []
+    for case in cases:
+        if not session:
+            history = []
+        result = run_case(client, model, history, case["prompt"], tools, effort)
+        result["expect_tool"] = case["expect_tool"]
+        result["success"] = case["expect_tool"] in result["called_tools"]
+        results.append(result)
+    inferences = [i for r in results for i in r["inferences"]]
     return {
+        "cases": results,
+        "inferences": inferences,
+        "totals": {k: sum(i[k] for i in inferences) for k in inferences[0]},
+        "called_tools": [t for r in results for t in r["called_tools"]],
+        "tool_search_arguments": [a for r in results for a in r["tool_search_arguments"]],
+        "successes": sum(r["success"] for r in results),
+        "elapsed_s": round(sum(r["elapsed_s"] for r in results), 2),
+    }
+
+
+def input_equivalent(totals: dict[str, int], cached_ratio: float, output_ratio: float) -> float:
+    """Cost in uncached-input-token units: U + c*C + r*O (cache writes not modelled)."""
+    uncached = totals["input_tokens"] - totals["cached_tokens"]
+    return round(uncached + cached_ratio * totals["cached_tokens"] + output_ratio * totals["output_tokens"], 1)
+
+
+def compare(
+    client: OpenAI, model: str, tools: list[dict[str, Any]], cases: list[dict[str, str]] | str,
+    effort: str = "low", session: bool = False, cached_ratio: float | None = None, output_ratio: float | None = None,
+) -> dict[str, Any]:
+    if isinstance(cases, str):  # single prompt, demo expectation
+        cases = [{"prompt": cases, "expect_tool": DEMO_EXPECTED_TOOL}]
+    eager = run_variant(client, model, cases, tools, effort, session)
+    deferred = run_variant(client, model, cases, to_deferred(tools), effort, session)
+    e_in, d_in = eager["totals"]["input_tokens"], deferred["totals"]["input_tokens"]
+    report = {
         "model": model,
+        "cases": len(cases),
+        "session": session,
         "eager": eager,
         "deferred": deferred,
         "input_token_change_pct": round(100.0 * (d_in - e_in) / e_in, 1) if e_in else None,
         "output_token_delta": deferred["totals"]["output_tokens"] - eager["totals"]["output_tokens"],
     }
+    if cached_ratio is not None and output_ratio is not None:
+        e_cost = input_equivalent(eager["totals"], cached_ratio, output_ratio)
+        d_cost = input_equivalent(deferred["totals"], cached_ratio, output_ratio)
+        report["input_equivalent_cost"] = {"eager": e_cost, "deferred": d_cost,
+                                           "change_pct": round(100.0 * (d_cost - e_cost) / e_cost, 1)}
+    return report
+
+
+def load_cases(path: str) -> list[dict[str, str]]:
+    """JSON Lines: one {"prompt": ..., "expect_tool": ...} object per line."""
+    with open(path, encoding="utf-8") as fh:
+        cases = [json.loads(line) for line in fh if line.strip()]
+    if not cases or any(not c.get("prompt") or not c.get("expect_tool") for c in cases):
+        raise ValueError("every case needs non-empty 'prompt' and 'expect_tool'")
+    return cases
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -177,13 +245,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--tools-file", help="JSON array of Responses tool definitions (default: synthetic demo catalog)")
     p.add_argument("--prompt", default=DEMO_PROMPT)
     p.add_argument("--expect-tool", help="Tool the deferred variant must call (required with --tools-file)")
+    p.add_argument("--cases", help="JSONL of {prompt, expect_tool}; overrides --prompt/--expect-tool")
+    p.add_argument("--session", action="store_true", help="Chain cases as turns of one conversation")
+    p.add_argument("--cached-ratio", type=float, help="Cached/uncached input price ratio, e.g. 0.1")
+    p.add_argument("--output-ratio", type=float, help="Output/uncached input price ratio, e.g. 8")
     p.add_argument("--effort", default="low", choices=["none", "minimal", "low", "medium", "high"])
     a = p.parse_args(argv)
     if not a.endpoint:
         p.error("--endpoint (or AZURE_OPENAI_ENDPOINT / FOUNDRY_PROJECT_ENDPOINT) is required")
-    if a.tools_file and not a.expect_tool:
-        p.error("--expect-tool is required with --tools-file")
-    expect_tool = a.expect_tool or DEMO_EXPECTED_TOOL
+    if a.tools_file and not (a.expect_tool or a.cases):
+        p.error("--expect-tool or --cases is required with --tools-file")
+    if (a.cached_ratio is None) != (a.output_ratio is None):
+        p.error("--cached-ratio and --output-ratio must be given together")
 
     try:
         if a.tools_file:
@@ -191,12 +264,14 @@ def main(argv: list[str] | None = None) -> int:
                 tools = json.load(fh)
         else:
             tools = build_demo_catalog()
-        report = compare(make_client(a.endpoint, a.tenant), a.model, tools, a.prompt, a.effort)
+        cases = load_cases(a.cases) if a.cases else [{"prompt": a.prompt, "expect_tool": a.expect_tool or DEMO_EXPECTED_TOOL}]
+        report = compare(make_client(a.endpoint, a.tenant), a.model, tools, cases, a.effort, a.session,
+                         a.cached_ratio, a.output_ratio)
     except Exception as exc:  # API/config/input errors (e.g. HTTP 400 on unsupported models)
         print(json.dumps({"error": type(exc).__name__, "detail": str(exc)[:500]}, indent=2))
         return 2
     print(json.dumps(report, indent=2, default=str))
-    return 0 if expect_tool in report["deferred"]["called_tools"] else 1
+    return 0 if report["deferred"]["successes"] == len(cases) else 1
 
 
 if __name__ == "__main__":
