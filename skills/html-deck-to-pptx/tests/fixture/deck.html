@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Synthetic conversion fixture</title>
+<!-- Self-contained synthetic deck for html-deck-to-pptx smoke tests. No external assets. -->
+<style>
+  html, body { margin: 0; background: #0b1020; }
+  body { font-family: "Segoe UI", Arial, sans-serif; color: #e8ecf4; }
+  section.slide {
+    position: relative; width: 1280px; height: 720px; box-sizing: border-box;
+    padding: 64px 80px; overflow: hidden;
+    background: linear-gradient(135deg, #0b1020 0%, #18234a 100%);
+  }
+  h1 { font-size: 56px; margin: 0 0 16px; font-weight: 600; }
+  h2 { font-size: 40px; margin: 0 0 28px; font-weight: 600; }
+  p { font-size: 24px; line-height: 1.4; margin: 0 0 16px; }
+  a { color: #7cc4ff; }
+  .kicker { font-size: 18px; letter-spacing: .12em; text-transform: uppercase; color: #9fb3d9; }
+  .cards { display: flex; gap: 32px; margin-top: 24px; }
+  .card {
+    flex: 1; border-radius: 18px; padding: 28px;
+    background: linear-gradient(90deg, #2563eb 0%, #7c3aed 100%);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  }
+  .card h3 { font-size: 28px; margin: 0 0 10px; }
+  .card p { font-size: 20px; margin: 0; }
+  .icon { width: 64px; height: 64px; display: block; margin-bottom: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 22px; }
+  th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid #3b4a75; }
+  th { background: #1f2d5c; }
+  ul, ol { font-size: 26px; line-height: 1.5; margin: 0; padding-left: 36px; }
+  .notes { display: none; }
+</style>
+</head>
+<body>
+
+<section class="slide" id="s1">
+  <div class="kicker">Synthetic fixture</div>
+  <h1>Quarterly platform review</h1>
+  <p>Fictional data for converter testing only.</p>
+  <p>Jump to the <a href="#s4">summary table</a> or read the <a href="https://example.com/">public example</a>.</p>
+  <aside class="notes">Speaker note for slide one: introduce the synthetic review.</aside>
+</section>
+
+<section class="slide" id="s2">
+  <h2>Three focus areas</h2>
+  <div class="cards">
+    <div class="card">
+      <svg class="icon" viewBox="0 0 64 64" aria-hidden="true">
+        <circle cx="32" cy="32" r="28" fill="#ffffff" fill-opacity=".9"/>
+        <path d="M20 33l8 8 16-18" stroke="#2563eb" stroke-width="6" fill="none" stroke-linecap="round"/>
+      </svg>
+      <h3>Reliability</h3>
+      <p>Error budget kept for all twelve weeks.</p>
+    </div>
+    <div class="card">
+      <svg class="icon" viewBox="0 0 64 64" aria-hidden="true">
+        <rect x="8" y="34" width="10" height="22" fill="#fff"/>
+        <rect x="27" y="22" width="10" height="34" fill="#fff"/>
+        <rect x="46" y="10" width="10" height="46" fill="#fff"/>
+      </svg>
+      <h3>Adoption</h3>
+      <p>Active projects grew from 40 to 52.</p>
+    </div>
+    <div class="card">
+      <svg class="icon" viewBox="0 0 64 64" aria-hidden="true">
+        <polygon points="32,6 58,56 6,56" fill="#fff"/>
+        <rect x="29" y="24" width="6" height="18" fill="#7c3aed"/>
+      </svg>
+      <h3>Risks</h3>
+      <p>Two dependencies still need owners.</p>
+    </div>
+  </div>
+  <aside class="notes">Speaker note for slide two: the cards use a linear gradient fill.</aside>
+</section>
+
+<section class="slide" id="s3">
+  <h2>Next steps</h2>
+  <ul>
+    <li>Confirm owners for the open dependencies</li>
+    <li>Publish the reliability report</li>
+    <li>Review adoption targets with the team</li>
+  </ul>
+  <ol style="margin-top: 24px">
+    <li>Draft plan</li>
+    <li>Review</li>
+    <li>Approve</li>
+  </ol>
+  <aside class="notes">Speaker note for slide three: bullets and numbering should stay native.</aside>
+</section>
+
+<section class="slide" id="s4">
+  <h2>Summary</h2>
+  <table>
+    <thead><tr><th>Area</th><th>Status</th><th>Owner</th></tr></thead>
+    <tbody>
+      <tr><td>Reliability</td><td>On track</td><td>Platform team</td></tr>
+      <tr><td>Adoption</td><td>Ahead</td><td>Enablement team</td></tr>
+      <tr><td>Risks</td><td>Needs owners</td><td>To be assigned</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top: 24px"><a href="#s1">Back to the start</a></p>
+  <aside class="notes">Speaker note for slide four: the table must be an editable PowerPoint table.</aside>
+</section>
+
+</body>
+</html>

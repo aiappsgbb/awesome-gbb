@@ -12,9 +12,10 @@ description: >
   presentation content audit, executive briefing, technical presentation,
   training slides, evidence review, speaker notes, slide storyboard.
   DO NOT USE FOR: direct editing of existing PPTX files (use `pptx` for file
-  operations; use this skill for editorial review), PDF generation, Google Slides.
+  operations; use this skill for editorial review), converting an existing HTML
+  slide deck to PPTX (use html-deck-to-pptx), PDF generation, Google Slides.
 metadata:
-  version: "2.3.0"
+  version: "2.3.1"
 ---
 
 # GBB PPTX Deck Generator Skill

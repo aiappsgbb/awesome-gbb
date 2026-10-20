@@ -1,0 +1,12 @@
+{
+  "name": "html-deck-to-pptx",
+  "private": true,
+  "type": "module",
+  "description": "Convert an HTML slide deck into a native, editable PowerPoint file",
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "playwright": "^1.56.0",
+    "pngjs": "^7.0.0",
+    "pptxgenjs": "^3.12.0"
+  }
+}

@@ -1,0 +1,34 @@
+[
+  {
+    "query": "Convert this reveal.js presentation (slides/index.html) into a PowerPoint file my colleagues can edit.",
+    "should_trigger": true
+  },
+  {
+    "query": "I built the deck as an HTML page with section.slide elements. Export it to PPTX with real text, tables and speaker notes, not screenshots.",
+    "should_trigger": true
+  },
+  {
+    "query": "Our keyboard-driven HTML deck needs to be shared as .pptx so people can recycle individual slides. Keep the embedded video if possible.",
+    "should_trigger": true
+  },
+  {
+    "query": "Check how close the PowerPoint export of my HTML deck is to the original and show me which slides differ most.",
+    "should_trigger": true
+  },
+  {
+    "query": "Create a new ten-slide PowerPoint pitch deck about our product launch from these notes.",
+    "should_trigger": false
+  },
+  {
+    "query": "Build a scrollytelling HTML presentation about our pilot results.",
+    "should_trigger": false
+  },
+  {
+    "query": "Fix the typo on slide 4 of quarterly-review.pptx and change the theme colours.",
+    "should_trigger": false
+  },
+  {
+    "query": "Print my HTML deck to a PDF handout.",
+    "should_trigger": false
+  }
+]

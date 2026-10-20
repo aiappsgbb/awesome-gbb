@@ -7,9 +7,10 @@ description: >
   distinctive responsive web design suited to guided talks and independent reading.
   USE FOR: continuous HTML narratives, evidence-backed browser presentations
   and purposeful exploration. DO NOT USE FOR: general websites or applications
-  (use web-experience-design), or native editable PowerPoint (use gbb-pptx).
+  (use web-experience-design), native editable PowerPoint (use gbb-pptx), or
+  converting an existing HTML slide deck to PPTX (use html-deck-to-pptx).
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # HTML presentation
