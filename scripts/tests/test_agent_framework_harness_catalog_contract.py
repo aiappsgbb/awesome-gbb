@@ -27,10 +27,10 @@ class AgentFrameworkHarnessCatalogContractTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(plugin["version"], "5.2.0")
-        self.assertIn("44 reusable building blocks", plugin["description"])
-        self.assertEqual(marketplace["metadata"]["version"], "5.2.0")
-        self.assertEqual(marketplace["plugins"][0]["version"], "5.2.0")
+        self.assertEqual(plugin["version"], "5.3.0")
+        self.assertIn("45 reusable building blocks", plugin["description"])
+        self.assertEqual(marketplace["metadata"]["version"], "5.3.0")
+        self.assertEqual(marketplace["plugins"][0]["version"], "5.3.0")
 
     def test_adjacent_skills_route_to_harness_ownership(self) -> None:
         expected_versions = {

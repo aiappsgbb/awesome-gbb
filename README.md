@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-44-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-45-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -215,6 +215,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 | [**web-experience-design**](skills/web-experience-design/) | **Merged source; release pending:** task-first web experiences for reports, comparisons, catalogs, tools and sites. Content and navigation before styling; meaningful icons/motion; real-content wireframes and browser task evidence. No mandatory theme, stack or external generator. [Output acceptance pending](docs/maintenance/web-experience-design-validation.md). |
 | [**gbb-pptx**](skills/gbb-pptx/) | Plan, review and generate content-first presentations: audience, storyline, evidence, storyboard and editorial checks before python-pptx rendering. Confirm audience/depth; default complete decks to cover, framing, development and closing. Optional browser-first guidance requires early export proof and explicit editability; retains native rendering, themes and notes. |
 | [**html-presentation**](skills/html-presentation/) | Evidence-backed continuous HTML presentations: native scrolling and chapter anchors, purposeful explorers, supplied Azure palette, authentic artwork and accessible offline runtime. WorkIQ, Seismic and Microsoft Learn grounding with explicit source gaps. Lean Cowork packaging; model evaluations deferred. Use web-experience-design for general web UX and gbb-pptx for editable native PowerPoint. |
+| [**html-deck-to-pptx**](skills/html-deck-to-pptx/) | Convert an existing HTML slide deck (reveal.js, `section.slide`, keyboard-driven) into a native, editable PPTX: text runs, linear gradients, tables, bullets, hyperlinks, speaker notes and embedded video; only icons/diagrams are rasterized. Visual QA renders the PPTX in PowerPoint or LibreOffice and ranks slides by difference from the HTML. Local Node.js + Playwright; no Azure. |
 | [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
 
 ### 🧬 Org Composition & Zava Workspace
@@ -236,7 +237,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install the catalog in one command via plugin.** The proposed catalog contains 44 skills in a single [Copilot CLI plugin](plugin.json). Main includes AgentOps, delegated-auth and web-experience-design source; progress-guard, copilot-doctor and managed voice are source candidates. The html-presentation addition has local tooling checks, not completed model evaluations. Installation does not certify remaining acceptance gates:
+> **Install the catalog in one command via plugin.** The proposed catalog contains 45 skills in a single [Copilot CLI plugin](plugin.json). Main includes AgentOps, delegated-auth and web-experience-design source; progress-guard, copilot-doctor and managed voice are source candidates. The html-presentation and html-deck-to-pptx additions have local tooling checks, not completed model evaluations. Installation does not certify remaining acceptance gates:
 >
 > ```bash
 > # Register the marketplace once:

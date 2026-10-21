@@ -1,5 +1,23 @@
 # Changelog
 
+## 5.3.0 — Unreleased — html-deck-to-pptx
+
+- Add [`html-deck-to-pptx`](skills/html-deck-to-pptx/SKILL.md) **1.0.0**: convert an
+  existing HTML slide deck (reveal.js, `section.slide`, keyboard-driven decks) into a
+  native, editable PPTX with pptxgenjs — text runs, linear gradients (fills, borders,
+  text), tables, bullets, hyperlinks incl. in-deck jumps, speaker notes and embedded
+  MP4 — rasterizing only SVG/img/canvas/filtered elements. `qa.mjs` renders the PPTX
+  in PowerPoint or LibreOffice and ranks slides by visual difference from the HTML.
+  Local Node.js + Playwright tooling; no Azure resources. Ships a self-contained
+  synthetic fixture deck and an offline packaging contract test.
+- Cross-reference the converter in the `DO NOT USE FOR` clauses of
+  [`gbb-pptx`](skills/gbb-pptx/SKILL.md) PATCH **2.3.0 → 2.3.1** and
+  [`html-presentation`](skills/html-presentation/SKILL.md) PATCH **1.0.0 → 1.0.1**
+  (description-only).
+- Inventory becomes **45 skills**, **36 upstream pins** (31 auto-tier),
+  **9 internal-IP entries** and **27 registered fixtures**. Plugin and marketplace
+  **5.2.0 → 5.3.0**.
+
 ## Unreleased — token-economics current model families
 
 - [`token-economics`](skills/token-economics/SKILL.md) MINOR **1.0.0 → 1.1.0**:

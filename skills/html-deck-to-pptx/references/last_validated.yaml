@@ -1,0 +1,21 @@
+# Freshness tier C — internal IP, no upstream to track.
+# Local conversion and rendering checks; no Azure resources are involved.
+last_validated: "2026-10-20"
+validated_by: copilot-bot
+validation_notes: |
+  Version 1.0.0 (2026-10-20), author-driven local validation on macOS with
+  Node 26, Playwright Chromium and Microsoft PowerPoint as QA renderer.
+  Fresh `npm ci` from the committed lockfile, then conversion of the bundled
+  synthetic fixture tests/fixture/deck.html (4 slides: gradient cards with
+  SVG icons, bullets and numbering, table, in-deck and external links,
+  speaker notes). qa.mjs reported 1.9-3.1% differing pixels per slide; the
+  side-by-side sheet was inspected visually. The PPTX contained native text
+  runs on every slide, 3 gradient fills, a native table, buChar/buAutoNum
+  bullets, a slide-jump hyperlink and four notes slides; only the 3 SVG
+  icons were rasterized.
+  Before publication the author also converted three larger non-public decks
+  (a 40-slide section.slide deck, an 11-slide keyboard-driven deck and a
+  synthetic reveal.js deck with fragments, vertical slides, a table, code and
+  notes) with mean QA differences of about 3.6-5.4%. Those decks are not
+  committed. LibreOffice rendering, Windows hosts and fresh-consumer trigger
+  evaluations (evals/trigger-evals.json) were not executed for this version.

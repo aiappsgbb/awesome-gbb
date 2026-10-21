@@ -25,7 +25,7 @@ class GbbPptxContractTests(unittest.TestCase):
         data = yaml.safe_load(text.split("---", 2)[1])
         self.assertEqual(set(data), {"name", "description", "metadata"})
         self.assertEqual(data["name"], SKILL.name)
-        self.assertEqual(data["metadata"]["version"], "2.3.0")
+        self.assertEqual(data["metadata"]["version"], "2.3.1")
         description = data["description"]
         self.assertGreaterEqual(len(description), 200)
         self.assertLessEqual(len(description), 1024)
