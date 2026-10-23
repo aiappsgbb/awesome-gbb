@@ -6,18 +6,19 @@ description: >
   significance inflation, AI vocabulary, copula avoidance, false ranges,
   sycophantic openers, signposting, filler). Ships Microsoft GBB voice
   samples (seller pitch + technical blog) and density-preserving guardrails
-  so domain lists and code blocks survive. Read the full skill body for
-  the multi-pass procedure and pattern catalog.
+  so domain lists and code blocks survive. Adds a reader-first pass for
+  comprehension.
   USE FOR: humanize prose, remove AI-isms, polish overview.html, polish demo
   script, polish speaker notes, AI tells, ChatGPT cadence, em dash overuse,
   rule of three, voice calibration, GBB seller voice, Cowork prose polish,
   threadlight overview polish, gbb-pptx speaker notes polish, slide titles,
-  bullets and alt text, UI copy, Italian AI copy, sound less AI.
+  bullets and alt text, UI copy, Italian AI copy, sound less AI, plain
+  language.
   DO NOT USE FOR: code, agent system prompts (directive style intentional),
   SKILL.md frontmatter, table data / KPI values / code blocks, SME verbatim
   quotes, structured data.
 metadata:
-  version: "1.1.1"
+  version: "1.2.0"
 ---
 
 # GBB Humanizer — remove AI tells from prose
@@ -30,9 +31,10 @@ Wikipedia's "Signs of AI writing" page, maintained by WikiProject AI Cleanup.
 > [blader/humanizer](https://github.com/blader/humanizer) **v2.5.1** (MIT).
 > The 29-pattern catalog, the personality/soul guidance, the process loop, and
 > the full example below are **upstream canon** — do not modify them when
-> editing this skill. Awesome-gbb additions are confined to the four sections
-> below this Provenance block (When to use, Voice calibration, Section-aware
-> mode, Density-preserving guardrail) and the GBB changelog at the bottom.
+> editing this skill. Awesome-gbb additions are confined to the `GBB ·`
+> sections below this Provenance block (When to use, Reader-first pass, Voice
+> calibration, Section-aware mode, Short-copy mode, Density-preserving
+> guardrail) and the GBB changelog at the bottom.
 >
 > The upstream pin tracks blader/humanizer **v3.1.0**, which restructured the
 > catalog into 26 patterns. This skill intentionally keeps the v2.5.1 numbering;
@@ -67,10 +69,86 @@ the catalog's prose-heavy artifacts to whether and how to humanize them.
 ```
 /gbb-humanizer
 
-Humanize the body paragraphs of the file at <path>.
+Humanize the body paragraphs of the file at <path>. Run the reader-first pass first.
 Use the voice sample at skills/gbb-humanizer/references/voice-samples/gbb-seller-pitch.md
 as the calibration anchor. Skip code blocks, tables, headings, and SME quotes.
 ```
+
+---
+
+## GBB · Reader-first pass
+
+Removing tells is not enough. In a 2025 study, people who use LLMs often
+spotted AI-written articles from vocabulary, but also from formulaic structure,
+vague upbeat endings, tone and lack of originality, and prompting the model to
+avoid AI vocabulary did not remove those signals. Text reads as written by a
+person when the reader gets the point fast and can follow it. Run this pass
+first, then the pattern scan below. Sources and their strength:
+[`references/comprehension-evidence.md`](references/comprehension-evidence.md).
+
+**Before editing, answer three questions** from the source or the caller:
+
+1. Who reads this, and what do they already know?
+2. What must they know or do after reading?
+3. How will they read it: scanning an inbox, glancing at a slide, following a
+   guide while fixing something?
+
+If the source cannot answer question 2, say so instead of polishing around
+the gap.
+
+**Then edit for the reader:**
+
+1. **Lead with the point.** An email opens with the ask or the answer. A
+   paragraph opens with its claim. A slide title states the conclusion.
+   Context comes after; most readers scan and stop early.
+2. **Name who does what.** Give each sentence an actor and a verb. Turn nouns
+   back into verbs: `perform an assessment of` → `assess`, `enables the
+   optimization of` → `cuts`. Models overuse nominalizations and trailing
+   `-ing` clauses (pattern 3), which makes text dense and abstract.
+3. **Put known before new.** Start a sentence with what the reader already
+   has (the previous sentence's topic, their problem) and end with the new
+   fact. Sentences then connect without `Additionally` or `Moreover`.
+4. **Be concrete.** Prefer the number, the named system, the example or the
+   visible consequence to the category word. Use only facts in the source;
+   flag missing ones.
+5. **Cut what the reader does not need.** Remove warm-up sentences, recaps,
+   and the moral at the end of a paragraph (`This shows…`, `This matters
+   because…`, `creating a foundation for…`). Extra material lowers
+   comprehension even when it is true. One idea per paragraph.
+6. **Keep sentences parseable.** Check sentences over about 25 words: split
+   them or move parallel items into a list. Do not chop everything into short
+   sentences of the same length.
+7. **Fit explicitness to the reader.** Define terms and spell out links for
+   newcomers. Experts read explanations of what they already know as padding.
+8. **Let content choose the shape.** Parallel items go in a list. Reasoning
+   (`because`, `so`, `unless`) stays in prose. Paragraphs differ in length
+   when their content differs.
+
+**Voice in work writing.** The upstream "Personality and soul" section targets
+essays and blogs. In emails, decks, customer pages, guides and speaker notes,
+voice comes from a clear position and specific facts, not from added
+feelings, asides or musings. Do not add `Honestly`, `Here's the thing`,
+`I keep coming back to`, invented doubts or jokes the source does not have.
+Plain friendliness is fine: contractions, `you`, and `we` for Microsoft when
+the author speaks for Microsoft. Keep the register the audience expects.
+
+**Italian.** The same rules match Designers Italia guidance: forma attiva,
+frasi brevi, niente nominalizzazioni. Typical tells in generated Italian:
+`procedere all'implementazione di` (→ `implementare`), `effettuare una
+verifica` (→ `verificare`), `al fine di` (→ `per`), `risulta essere`
+(→ `è`), `in un'ottica di`, `questo dimostra come`, `un aspetto
+fondamentale`, and impersonal `si è deciso di` where the actor is known
+(→ `abbiamo deciso`).
+
+**Reader check.** After the final anti-AI pass, reread as the reader:
+
+- Can they state the main point from the title or the first two sentences?
+- Does every sentence have an actor and a verb?
+- Is every number, name and date in the source?
+- Do they know what to do next, if anything?
+
+Revise any span that fails. Readability scores and word lists can flag
+problems; passing them does not show the reader understands.
 
 ---
 
@@ -754,6 +832,7 @@ Key insight from Wikipedia: "LLMs use statistical algorithms to guess what shoul
 
 | Version | Upstream tracked | GBB-specific changes |
 |---|---|---|
+| 1.2.0 | blader/humanizer v2.5.1 body; pin v3.1.0 | Added the Reader-first pass: lead with the point, name who does what (verbs over nominalizations), known before new, concreteness, cutting extraneous material, a sentence-length check, explicitness by reader knowledge, and a reader check. Scoped the upstream personality guidance to essays and blogs; work writing gets no added feelings or asides. Added Italian plain-language tells. Evidence and strength labels in `references/comprehension-evidence.md`. Upstream catalog unchanged. |
 | 1.1.1 | blader/humanizer v2.5.1 body; pin v3.1.0 | Merged the v3.1.0 pin refresh (#479) with Short-copy mode. No content change beyond 1.0.7 and 1.1.0. |
 | 1.1.0 | blader/humanizer v2.5.1 | Added Short-copy mode for slide titles, bullets, alt text and interface copy, with Italian tells. Routed `gbb-pptx` short copy and `web-experience-design` UI copy to it; speaker notes keep the prose pass. |
 | 1.0.7 | blader/humanizer v2.5.1 body; pin v3.1.0 | Re-pinned upstream to v3.1.0 (`225a6f39`) and fixed pin validation for the v3 restructure (#479). Vendored catalog and numbering unchanged; v3 tells not yet adopted are listed in the pin file § 5. |
