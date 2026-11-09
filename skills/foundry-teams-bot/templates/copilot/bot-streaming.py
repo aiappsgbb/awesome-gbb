@@ -51,7 +51,7 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-AGENT_NAME = os.environ.get("AGENT_NAME", "bat-scraper")
+AGENT_NAME = os.environ.get("AGENT_NAME", "__PROJECT_NAME__")
 PROJECT_ENDPOINT = os.environ.get("PROJECT_ENDPOINT", "")
 AGENT_PROTOCOL = os.environ.get("AGENT_PROTOCOL", "responses").lower()
 REPORT_EXTENSIONS = {".xlsx", ".csv", ".html", ".json", ".md", ".txt", ".pdf"}
