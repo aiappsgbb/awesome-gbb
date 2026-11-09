@@ -7,9 +7,11 @@ description: >
   USE FOR: connect agent to Teams, Teams bot, Teams integration, expose agent in Teams,
   Teams channel, sideload Teams app, add Teams to Foundry agent, chat with agent in Teams.
   DO NOT USE FOR: designing the agent (use threadlight-design), deploying the hosted agent
-  itself (use threadlight-deploy), general Bot Framework development.
+  itself (use threadlight-deploy), general Bot Framework development, generic Teams bots,
+  tabs, message extensions or Adaptive Card UX without a Foundry agent (use the official
+  teams-app-developer skill from the Microsoft 365 Agents Toolkit plugin).
 metadata:
-  version: "2.0.0"
+  version: "2.1.0"
 ---
 
 # Foundry Teams Bot
@@ -30,6 +32,42 @@ Invoke this skill when the user wants to:
 - A **deployed Foundry Hosted Agent** (see `threadlight-deploy` or `foundry-hosted-agents` skills)
 - An Azure subscription with Contributor access
 - The agent's **Foundry project endpoint**
+
+### Related official skill
+
+For general Teams development that is not specific to a Foundry agent (tabs, message
+extensions, Adaptive Card design, Slack migration, TypeScript bots scaffolded with
+`atk`), use the `teams-app-developer` skill from the Microsoft 365 Agents Toolkit
+plugin. This skill covers only the bridge from a deployed Foundry agent to Teams,
+with Python, azd, Bicep and a user-assigned managed identity.
+
+If no custom bot logic is needed, Foundry can also
+[publish an agent to Microsoft 365 Copilot and Teams directly](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/publish-copilot-virtual-network)
+without your own bot code. That path does not support file uploads in Microsoft 365
+Copilot, streaming or citations (see its Limitations table).
+
+---
+
+## Channel limits: Teams vs Microsoft 365 Copilot
+
+The template manifest declares both the `personal` (Teams) and `copilot` scopes, so the
+same bot appears in Teams and in Microsoft 365 Copilot. The two channels behave
+differently. Microsoft 365 Copilot treats this bot as a **custom engine agent**, and the
+[known issues for custom engine agents](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/known-issues#custom-engine-agents)
+apply regardless of the SDK used to build it:
+
+| Capability | Teams | Microsoft 365 Copilot |
+|---|---|---|
+| User uploads a file or image to the agent | ✅ with `supportsFiles: true` | ❌ attachments are not passed to the agent |
+| Agent returns a downloadable file (FileConsentCard / file card) | ✅ personal chat | ❌ rendered as non-interactive text |
+| Proactive messages | ✅ | ❌ |
+| Message edits (`updateActivity`) | ✅ | ❌ messages are immutable |
+| Hero, thumbnail, animation, audio, receipt, sign-in cards | ✅ | ❌ |
+| Adaptive Card refresh with `Action.Execute` | ✅ | ⚠️ updated content is not kept when the chat is reopened |
+
+If a scenario depends on users uploading documents, deliver it in Teams (or in a custom
+web front end). Changing SDK or adding a proxy does not remove the Microsoft 365 Copilot
+limit; check the known-issues page for the current status before promising it.
 
 ---
 
@@ -137,7 +175,9 @@ Replace `__PROJECT_NAME__` with the Foundry agent name.
 chosen bot, and copy the canonical
 [`operation_evidence.py`](../foundry-hosted-agents/references/python/operation_evidence.py)
 beside it. Set `BOT_OPERATION_DIR` to an existing owner-private absolute
-directory before launch. All three templates write intent before dispatch and
+directory before launch; the template `Dockerfile` creates `/var/lib/bot-operations`
+(mode 700) and sets the variable. Without it every message fails with
+`Exception caught : 'BOT_OPERATION_DIR'`. All three templates write intent before dispatch and
 reject duplicate channel/conversation/activity IDs without a second invocation.
 Use a durable volume or the application's existing durable store for recovery
 across container replacement; ephemeral local storage proves only that lifetime.
@@ -404,13 +444,14 @@ module copilotAca 'bot/aca.bicep' = {
   name: 'copilot'
   params: {
     name: 'copilot-${environmentName}'
-    image: '${acrEndpoint}/copilot:latest'
+    image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'  // replaced by `azd deploy`
     targetPort: 80
     userAssignedIdentityId: uami.outputs.id
     acrLoginServer: acrEndpoint
     env: [
       { name: 'AZURE_CLIENT_ID', value: uami.outputs.clientId }
       { name: 'PROJECT_ENDPOINT', value: projectEndpoint }
+      { name: 'AGENT_NAME', value: '__PROJECT_NAME__' }
       {
         name: 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID'
         value: uami.outputs.clientId
@@ -424,7 +465,7 @@ module copilotAca 'bot/aca.bicep' = {
         value: 'UserManagedIdentity'
       }
     ]
-    tags: tags
+    tags: union(tags, { 'azd-service-name': 'bot' })
   }
 }
 ```
@@ -569,33 +610,13 @@ services:
     language: py
     host: containerapp
     docker:
-      path: ./src/bot/Dockerfile
-      context: ./src/bot
-      remoteBuild: true
+      path: ./Dockerfile   # relative to the service `project` folder
+      remoteBuild: true    # build in ACR; no local Docker daemon needed
 ```
 
-Or deploy manually:
-
-```bash
-# Build and push copilot image
-az acr build --registry <your-acr> --image copilot:latest ./copilot/
-
-# Create copilot ACA
-az containerapp create \
-    --name copilot-<env> \
-    --resource-group <rg> \
-    --environment <cae-id> \
-    --image <acr>.azurecr.io/copilot:latest \
-    --target-port 80 \
-    --ingress external \
-    --user-assigned <uami-resource-id> \
-    --env-vars \
-        AZURE_CLIENT_ID=<uami-client-id> \
-        PROJECT_ENDPOINT=<foundry-endpoint> \
-        CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID=<uami-client-id> \
-        CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID=<tenant-id> \
-        CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity
-```
+Deploy with `azd provision` then `azd deploy` (or `azd up`). Do not hand-roll
+`az acr build` + `az containerapp create`: azd finds the app through the
+`azd-service-name: bot` tag on the Container App and swaps the placeholder image.
 
 ---
 
@@ -621,7 +642,10 @@ module fetchBotImage 'bot/fetch-container-image.bicep' = {
 // Pass the preserved image to aca.bicep:
 module botAca 'bot/aca.bicep' = {
   params: {
-    image: botAppExists ? fetchBotImage.outputs.image : '${acrEndpoint}/bot:latest'
+    // First provision: the ACR image does not exist yet, so start from a public
+    // placeholder; `azd deploy` replaces it. Pointing at '${acrEndpoint}/bot:latest'
+    // fails the first provision with MANIFEST_UNKNOWN.
+    image: botAppExists ? fetchBotImage.outputs.image : 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
     // ... other params
   }
 }
@@ -663,13 +687,14 @@ module botRbac 'bot/bot-rbac.bicep' = {
 module botAca 'bot/aca.bicep' = {
   params: {
     name: 'bot-${environmentName}'
-    image: botAppExists ? fetchBotImage.outputs.image : '${acrEndpoint}/bot:latest'
+    image: botAppExists ? fetchBotImage.outputs.image : 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
     userAssignedIdentityId: uami.outputs.id
     acrLoginServer: acrEndpoint
+    tags: union(tags, { 'azd-service-name': 'bot' })  // lets `azd deploy` find the app
     env: [
       { name: 'AZURE_CLIENT_ID', value: uami.outputs.clientId }
       { name: 'PROJECT_ENDPOINT', value: projectEndpoint }
-      { name: 'FOUNDRY_AGENT_NAME', value: '__PROJECT_NAME__' }
+      { name: 'AGENT_NAME', value: '__PROJECT_NAME__' }  // read by every bot template
       { name: 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID', value: uami.outputs.clientId }
       { name: 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID', value: tenant().tenantId }
       { name: 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE', value: 'UserManagedIdentity' }
@@ -839,6 +864,8 @@ file card they can preview or download.
 
 > **Limitation:** Only works in `personal` context (1:1 chat), NOT channels or group chats.
 > Requires `supportsFiles: true` in the Teams manifest.
+> Teams only: Microsoft 365 Copilot does not render the consent or file cards
+> (see [Channel limits](#channel-limits-teams-vs-microsoft-365-copilot)).
 
 **Flow:** Agent generates file → bot downloads from session files API → bot sends
 FileConsentCard → user accepts → bot uploads to OneDrive URL → bot sends FileCard.
@@ -1090,6 +1117,17 @@ if context.activity.attachments:
 > Forwarding binary files to the Foundry agent's Responses API (which expects text input)
 > needs further design — likely upload to blob storage and pass URL, or base64-encode
 > for small files.
+>
+> This works in Teams only. In Microsoft 365 Copilot the attachment never reaches the
+> bot (see [Channel limits](#channel-limits-teams-vs-microsoft-365-copilot)).
+>
+> Official reference samples for receiving files and replying with cards:
+> [`microsoft/teams.py` › examples/ai-file-analysis](https://github.com/microsoft/teams.py/tree/main/examples/ai-file-analysis)
+> (Teams SDK, Python: download, size/format guardrails, Adaptive Card reply),
+> [`Microsoft-Teams-Samples` › TeamsSDK/bot-attachments](https://github.com/OfficeDev/Microsoft-Teams-Samples/tree/main/samples/TeamsSDK/bot-attachments)
+> (download, FileConsentCard, OneDrive upload) and
+> [`microsoft/Agents` › samples/python/cards](https://github.com/microsoft/Agents/tree/main/samples/python/cards)
+> (Adaptive and rich cards with the Microsoft 365 Agents SDK).
 
 ---
 
