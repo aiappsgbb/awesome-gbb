@@ -112,7 +112,7 @@ scope (project-only and account-only both 401).
 
 ```bash
 azd ext install microsoft.foundry
-azd ext install azure.ai.agents --version 1.2.0 --force
+azd ext install azure.ai.agents --version 1.0.0-beta.14 --force
 extensions_json="$(azd ext list --output json)"
 microsoft_foundry_version="$(jq -er \
   '[.[] | select(.id == "microsoft.foundry") | .installedVersion | select(type == "string" and length > 0)]
