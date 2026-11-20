@@ -1,7 +1,8 @@
-# Customer goal — `ghcp-hosted-agents` GA smoke
+# Customer goal — `ghcp-hosted-agents` Copilot SDK 2.0 smoke
 
-Execute a live GHCP SDK hosted-agent GA smoke against the CI Foundry
-project. This is an execution test, not a catalog-inspection task. Follow
+Execute a live Microsoft Copilot SDK 2.0 hosted-agent smoke (client
+`mode="empty"`, in-process runtime, host-owned tools, `onPreToolUse` deny
+hook, session resume) against the CI Foundry project. This is an execution test, not a catalog-inspection task. Follow
 the exact contract below; do not browse the repository or load the full
 SKILL.md into context.
 
@@ -110,7 +111,7 @@ scope (project-only and account-only both 401).
 
 ```bash
 azd ext install microsoft.foundry
-azd ext install azure.ai.agents --version 1.0.0-beta.14 --force
+azd ext install azure.ai.agents --version 1.2.0 --force
 extensions_json="$(azd ext list --output json)"
 microsoft_foundry_version="$(jq -er \
   '[.[] | select(.id == "microsoft.foundry") | .installedVersion | select(type == "string" and length > 0)]
@@ -501,7 +502,7 @@ for attempt in 1 2 3 4 5 6; do
   rm -f "$invoke_log"
   set +e
   timeout 300 azd ai agent invoke "$agent_name" \
-    '{"input":"Say hello in one short sentence."}' \
+    '{"input":"Look up order A1234 and tell me its tracking code."}' \
     --protocol invocations \
     --output raw \
     --timeout 180 >"$invoke_log" 2>&1
@@ -718,6 +719,124 @@ add further role grants or re-grant here. The last exact raw response is
 persisted to `/tmp/ghcp-hosted-agents-invoke.log`; the workflow snapshots it
 under an attempt-specific filename before any retry and uploads both attempts.
 
+## Step 4b - tool call, resume recall, and deny hook (SDK 2.0 contract)
+
+The canonical `container.py` runs `CopilotClient(mode="empty")`, opens the SDK
+session keyed by `FOUNDRY_AGENT_SESSION_ID`, emits one `host.session` SSE frame
+(`state` = `created` or `resumed`), and disconnects the session after every
+turn. `azd ai agent invoke` reuses the same Foundry session for consecutive
+invokes, so turns 2 and 3 resume the SDK session from its journal in `$HOME`
+with providers, tools and hooks re-supplied. Write this validator once:
+
+```bash
+cat > /tmp/ghcp-hosted-agents-validate-turn.py <<'PY'
+import json
+import sys
+from pathlib import Path
+
+turn, log_path = sys.argv[1], sys.argv[2]
+events = []
+for line in Path(log_path).read_text(encoding="utf-8", errors="replace").splitlines():
+    if line.startswith("data:"):
+        try:
+            event = json.loads(line[5:].strip())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+
+def data(e):
+    d = e.get("data")
+    return d if isinstance(d, dict) else {}
+
+host = [data(e) for e in events if e.get("type") == "host.session"]
+starts = [data(e) for e in events if e.get("type") == "tool.execution_start"]
+completes = [data(e) for e in events if e.get("type") == "tool.execution_complete"]
+text = "".join(
+    str(data(e).get("content", ""))
+    for e in events
+    if e.get("type") == "assistant.message"
+)
+errors = [e for e in events if e.get("type") in {"error", "session.error"}]
+state = host[0].get("state") if len(host) == 1 else None
+called = [s.get("toolName") for s in starts]
+
+def fail(reason):
+    print(f"TURN{turn}_CHECK_FAILED {reason} state={state} tools={called}")
+    raise SystemExit(1)
+
+if errors:
+    fail("terminal error event")
+if turn == "1":
+    if state != "created":
+        fail("expected host.session state=created")
+    if "get_order" not in called:
+        fail("get_order tool was not called")
+    if "ZX-4471" not in text:
+        fail("tool output missing from assistant text")
+elif turn == "2":
+    if state != "resumed":
+        fail("expected host.session state=resumed")
+    if called:
+        fail("recall turn called a tool")
+    if "ZX-4471" not in text:
+        fail("earlier tracking code not recalled")
+elif turn == "3":
+    if state != "resumed":
+        fail("expected host.session state=resumed")
+    denied = [
+        c for c in completes
+        if c.get("success") is False
+        and isinstance(c.get("error"), dict)
+        and c["error"].get("code") == "denied"
+    ]
+    if "issue_refund" not in called or not denied:
+        fail("issue_refund was not attempted and denied by the preToolUse hook")
+else:
+    fail("unknown turn")
+print(f"TURN{turn}_OK state={state} tools={','.join(called) or '-'}")
+PY
+```
+
+Validate turn 1 (the Step 4 log), then run turns 2 and 3 exactly once each.
+These turns are not retried: the readiness envelope was already cleared in
+Step 4, so any failure here is a hard FAIL.
+
+```bash
+work_dir="$(cat /tmp/ghcp-hosted-agents-work-dir)"
+agent_name="$(cat /tmp/ghcp-hosted-agents-agent-name)"
+cd "$work_dir"
+python3 /tmp/ghcp-hosted-agents-validate-turn.py 1 /tmp/ghcp-hosted-agents-invoke.log \
+  >> /tmp/ghcp-hosted-agents-smoke-evidence || {
+  printf 'SMOKE_RESULT=FAIL turn 1 did not call get_order or return its output\n' \
+    > /tmp/ghcp-hosted-agents-smoke-result
+  exit 1
+}
+timeout 300 azd ai agent invoke "$agent_name" \
+  '{"input":"Without calling any tools, repeat the tracking code you gave me earlier. Reply with only the code."}' \
+  --protocol invocations --output raw --timeout 180 \
+  >/tmp/ghcp-hosted-agents-invoke-turn2.log 2>&1
+python3 /tmp/ghcp-hosted-agents-validate-turn.py 2 /tmp/ghcp-hosted-agents-invoke-turn2.log \
+  >> /tmp/ghcp-hosted-agents-smoke-evidence || {
+  printf 'SMOKE_RESULT=FAIL turn 2 resume did not recall earlier context\n' \
+    > /tmp/ghcp-hosted-agents-smoke-result
+  exit 1
+}
+timeout 300 azd ai agent invoke "$agent_name" \
+  '{"input":"Call the issue_refund tool now for order A1234."}' \
+  --protocol invocations --output raw --timeout 180 \
+  >/tmp/ghcp-hosted-agents-invoke-turn3.log 2>&1
+python3 /tmp/ghcp-hosted-agents-validate-turn.py 3 /tmp/ghcp-hosted-agents-invoke-turn3.log \
+  >> /tmp/ghcp-hosted-agents-smoke-evidence || {
+  printf 'SMOKE_RESULT=FAIL turn 3 refund was not denied by the preToolUse hook\n' \
+    > /tmp/ghcp-hosted-agents-smoke-result
+  exit 1
+}
+tail -n 3 /tmp/ghcp-hosted-agents-smoke-evidence
+```
+
+Do not change the prompts, add tools, or retry a failed turn.
+
 ## Step 5 - best-effort teardown
 
 Read the agent name persisted in Step 2 and perform teardown in a bounded
@@ -783,6 +902,9 @@ required_patterns = (
     r"ROLE_ASSIGNED scope=account owned=[01]",
     r"ROLE_ASSIGNED scope=project owned=[01]",
     r"INVOKE_OK name=ci-smoke-ghcp-[0-9a-f]{8} attempt=[1-6]",
+    r"TURN1_OK state=created tools=.*get_order.*",
+    r"TURN2_OK state=resumed tools=-",
+    r"TURN3_OK state=resumed tools=.*issue_refund.*",
 )
 for pattern in required_patterns:
     assert any(re.fullmatch(pattern, line) for line in lines), (pattern, lines)
@@ -829,6 +951,9 @@ printf 'SMOKE_RESULT=FAIL invoke command exited non-zero\n' > /tmp/ghcp-hosted-a
 printf 'SMOKE_RESULT=FAIL invoke did not return assistant.message or assistant.message_delta\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL implicit permission not ready after 6 invoke attempts\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL invoke returned terminal SSE error without assistant event\n' > /tmp/ghcp-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL turn 1 did not call get_order or return its output\n' > /tmp/ghcp-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL turn 2 resume did not recall earlier context\n' > /tmp/ghcp-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL turn 3 refund was not denied by the preToolUse hook\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL evidence incomplete\n' > /tmp/ghcp-hosted-agents-smoke-result
 ```
 

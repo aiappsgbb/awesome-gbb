@@ -1,6 +1,7 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
 #
-# Canonical unified GHCP SDK hosted-agent azure.yaml — GA container-deploy shape.
+# Canonical unified Microsoft Copilot SDK 2.0 hosted-agent azure.yaml — GA
+# container-deploy shape.
 #
 # Source of truth for the prose example in
 # `../../SKILL.md § azure.yaml (unified GA deployment)`.
@@ -40,11 +41,16 @@ services:
     host: azure.ai.agent
     project: .
     language: docker
+    # Build on ACR, never on the local Docker daemon: without this key azd
+    # 1.37 + azure.ai.agents 1.2.0 built the image locally when Docker was
+    # available.
+    docker:
+      remoteBuild: true
     uses:
       - ai-project
     kind: hosted
     name: my-agent
-    description: A hosted agent built with the GitHub Copilot SDK (CopilotClient) and the Invocations protocol.
+    description: A hosted agent built with the Microsoft Copilot SDK 2.0 (CopilotClient) and the Invocations protocol.
     protocols:
       - protocol: invocations
         version: 2.0.0

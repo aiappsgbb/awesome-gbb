@@ -1,49 +1,50 @@
 ---
 name: ghcp-hosted-agents
 description: >
-  Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) with BYOK
-  authentication and Invocations protocol. Alternative to MAF (Agent +
-  FoundryChatClient + ResponsesHostServer). Use when you need streaming SSE
-  output, progressive skill discovery, or long tool loops (>120s) that hit
-  Foundry gateway timeout with Responses protocol.
-  USE FOR: ghcp sdk, copilot sdk, github copilot agent, CopilotClient,
+  Deploy Foundry hosted agents with the Microsoft Copilot SDK 2.0
+  (microsoft-copilot-sdk, formerly GitHub Copilot SDK) using BYOK managed
+  identity and the Invocations protocol. Covers client mode empty vs
+  coding-agent, in-process runtime, host-owned tools with allow-lists,
+  onPreToolUse governance hooks, session resume from a $HOME journal, and
+  SDK 1.x migration. Use for streaming SSE output or long tool loops (>120s)
+  that hit the Foundry gateway timeout with the Responses protocol.
+  USE FOR: copilot sdk, microsoft copilot sdk, ghcp sdk, github copilot sdk
+  migration, CopilotClient, mode empty, multi-tenant copilot agent,
   InvocationAgentServerHost, BYOK, bring your own key, invocations protocol,
   SSE streaming agent, long running agent, send_and_wait timeout,
   ghcp hosted agent, copilot client foundry.
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "3.0.0"
+  version: "4.0.0"
 ---
 
-# GHCP SDK Hosted Agents on Foundry
+# Microsoft Copilot SDK 2.0 Hosted Agents on Foundry
 
-Deploy Foundry hosted agents using the **GitHub Copilot SDK** with BYOK
-(Bring Your Own Key) authentication. No `GITHUB_TOKEN` required. Uses the
-**Invocations protocol** (GA, version `2.0.0`) with SSE streaming for
-unlimited tool-loop duration.
+Deploy Foundry hosted agents with the **Microsoft Copilot SDK 2.0**
+(`microsoft-copilot-sdk`, renamed from `github-copilot-sdk`) and BYOK
+(Bring Your Own Key) managed-identity authentication. No `GITHUB_TOKEN`
+required. Uses the **Invocations protocol** (GA, version `2.0.0`) with SSE
+streaming for unlimited tool-loop duration.
 
-> **GA migration (v2.0.0).** This skill now uses the unified single-file
-> `azure.yaml` deploy shape shared with `foundry-hosted-agents` — the old
-> two-file `agent.yaml` + separately-wired `azure.yaml` contract, the
-> remote-build/manual `services:` wiring, and the tenant-ID-env deploy hook
-> are all retired.
-> See § "azure.yaml (unified GA deployment)" and § "Identity & RBAC for
-> hosted agents" below.
+> **SDK 2.0 migration (v4.0.0).** The template now targets
+> `microsoft-copilot-sdk~=2.0.1`: explicit `mode="empty"`, the native runtime
+> loaded in-process, nested session options, named BYOK providers, host-owned
+> tools behind an allow-list, an `onPreToolUse` deny hook, and per-turn session
+> resume from a journal in `$HOME`. SDK 1.x code does not run unchanged — see
+> § "Migrating from SDK 1.x". Live-validated on Foundry on 2026-11-20
+> (tool call, resume recall, deny hook, cold-container resume).
 >
-> **RBAC correction (v2.0.9).** Real model inference requires granting the
-> hosted-agent **instance** identity the `Foundry User` role at BOTH the
-> Foundry **account** and **project** scopes before invoking. The earlier
-> "no agent role assignment needed" claim was validated only against an
-> upstream echo agent that never called a real model, so it silently
-> returned HTTP 401 on live inference. See § "Identity & RBAC for hosted
-> agents".
+> **RBAC (v2.0.9, still required).** Real model inference requires granting
+> the hosted-agent **instance** identity the `Foundry User` role at BOTH the
+> Foundry **account** and **project** scopes before invoking. See § "Identity
+> & RBAC for hosted agents".
 
-## When to Use GHCP SDK Instead of MAF
+## When to Use the Copilot SDK Instead of MAF
 
 **Shared deployment, distinct runtime.** Select/review the consumer against
 the [hosted contract](../foundry-hosted-agents/references/hosted-contract.json).
-The MAF private BASIC evidence does not certify this GHCP/Invocations variant.
+The MAF private BASIC evidence does not certify this Copilot SDK/Invocations variant.
 Keep its BYOK identities and permissions; do not copy the MAF implicit-access
 assumption to a different account-level call.
 
@@ -55,88 +56,124 @@ and treats the template runtime's `invocation_id` as a custom ID, not proof of
 a retrievable Foundry response. Reconcile an uncertain effect; never repeat it
 merely to recover output. See the [recovery contract](../foundry-hosted-agents/references/operation-recovery.md).
 
-| Consideration | MAF | GHCP SDK |
-|---------------|-----|----------|
-| **Auth** | `DefaultAzureCredential` → `FoundryChatClient` | BYOK: `DefaultAzureCredential` → bearer token |
+| Consideration | MAF | Copilot SDK 2.0 |
+|---------------|-----|-----------------|
+| **Auth** | `DefaultAzureCredential` → `FoundryChatClient` | BYOK: named provider + `bearer_token_provider` callback |
 | **Protocol** | Responses API (request/response) | Invocations (SSE streaming) |
 | **Tool loop limit** | ~120s (Foundry gateway timeout) | ♾️ (SSE keeps connection alive) |
-| **Per-query overhead** | Low (1-3 internal turns) | High (20-34 internal tool calls per query) |
-| **Skill discovery** | `SkillsProvider.from_paths()` (recommended) **OR** inline concat (legacy) | `SkillsProvider` (default) |
-| **Custom tools** | `@tool` decorator | Not supported (use MCP servers instead) |
-| **Toolbox** | `MCPStreamableHTTPTool` (was `client.get_toolbox()`, removed 1.3.0) | Not directly available |
-| **Maturity** | Production-proven | Validated (identical eval scores) |
+| **Per-query overhead** | Low (1-3 internal turns) | Low in `mode="empty"`: 2 model calls for a one-tool query (measured, see § Performance) |
+| **Skill discovery** | `SkillsProvider.from_paths()` (recommended) **OR** inline concat (legacy) | `skills.directories` / `skills.provider` session options |
+| **Custom tools** | `@tool` decorator | `@define_tool` + `tools.available_tools` allow-list |
+| **Governance hooks** | Middleware | `hooks.handlers.on_pre_tool_use` (allow / deny / ask) |
+| **Toolbox** | `MCPStreamableHTTPTool` (was `client.get_toolbox()`, removed 1.3.0) | Remote MCP via `mcp.servers` |
+| **Maturity** | Production-proven | Live-validated on Foundry (SDK 2.0.1) |
 
-**Use GHCP SDK when:**
-- Slow tools mask the per-query overhead: web scraping, long-running tools, or multi-site scans.
+**Use the Copilot SDK when:**
 - You need streaming progress events to the caller for workflows that run beyond the ~120s Responses gateway limit.
-- The workload looks like **bat-scraper**: Playwright/tool calls take 30-60s each, so GHCP SDK orchestration overhead is acceptable.
+- You want the Copilot agent runtime (planning, skills, MCP, hooks, session journal) with your own Foundry model.
+- Tool calls are slow (web scraping, Playwright, multi-site scans) and SSE keeps the connection alive.
 
 **Use MAF when:**
-- Tools are fast: data queries, MCP retrieval, or single-shot tools where orchestration overhead dominates latency.
-- You need the faster runtime path; field measurements show MAF at **~19s** vs GHCP SDK at **>220s** for the same fast-MCP workload (~10x faster).
-- Agent needs custom `@tool` functions, Foundry Toolbox (`web_search`, `code_interpreter`), or simpler deployment.
+- You need Foundry Toolbox built-ins (`web_search`, `code_interpreter`) or the Responses protocol (for example a Teams bot calling `responses.create()`).
+- Your application already uses Microsoft Agent Framework. Its Copilot adapter does not support SDK 2.0 (see § "Migrating from SDK 1.x").
 
 ---
 
-## ⚠️ Performance Caveat: Per-Query Overhead
+## Performance: SDK 2.0 in-process runtime
 
-Each `CopilotClient` query generates **20-34 internal tool calls** for planning,
-skill discovery, tool selection, and related orchestration.
-That happens regardless of how many user-facing tool calls the agent actually makes.
-The overhead lives in `CopilotClient` itself; `SkillsProvider` is **NOT** the cause.
-Removing `SkillsProvider` does not eliminate the extra internal turns.
-Field measurement on an identical agent (`gpt-5.4`, same MCP tool set, same query)
-ran in **~19s on MAF** but **>220s on GHCP SDK** when MCP tools were fast.
-The overhead is masked when tools are slow: bat-scraper Playwright calls take
-30-60s each, so 20 internal calls vanish in the noise.
-Decision rule: if your slowest tool is <2s, you almost certainly want MAF.
-If your slowest tool is >30s and you need streaming progress events to the caller,
-GHCP SDK is the better fit.
+SDK 1.x spawned a Copilot CLI child process and, with default settings, each
+query generated many internal tool calls; field measurements on 1.x showed
+**~19s on MAF vs >220s** for a fast-MCP workload. SDK 2.0 loads a native
+runtime in-process by default, and `mode="empty"` removes the ambient tools
+and CLI defaults. The 1.x numbers no longer apply.
 
-> **Note on `SkillsProvider` cost (both runtimes).** `SkillsProvider` is
-> **not** GHCP-only — MAF supports it equally well via
-> `context_providers=[skills_provider]` (see `foundry-hosted-agents`
-> § Skill Loading). On both runtimes, `SkillsProvider` itself adds only
-> **+1 `load_skill` round-trip per skill the agent activates per query**
-> (typically 1-3 per query). The 20-34-call overhead above is the
-> `CopilotClient` runtime, an entirely separate concern.
+**Tested (2026-11-20, n=3 per row).** Foundry hosted agent, Sweden Central,
+`gpt-5.4-mini` GlobalStandard, `microsoft-copilot-sdk` 2.0.1, `mode="empty"`,
+one-tool query (`get_order`). `runtime start` and `session open` are measured
+inside the container; the platform columns come from Foundry's
+`X-Ms-Debug-Latency-*` response headers; wall time is the full
+`azd ai agent invoke` call from a laptop, including CLI overhead.
+
+| Runtime connection | Turn | Runtime start | Session open | Container readiness | Response begin | Wall (azd invoke) |
+|--------------------|------|---------------|--------------|---------------------|----------------|-------------------|
+| In-process (default) | Cold (new session) | 85–89 ms | 159–165 ms (create) | 2.56–2.64 s | 3.86–4.05 s | 10.5–11.6 s |
+| In-process (default) | Warm (same session) | — | 23–25 ms (resume) | — | 0.16–0.31 s | 5.6–7.0 s |
+| Spawned stdio (`COPILOT_SDK_DEFAULT_CONNECTION=stdio`) | Cold | 85–94 ms | 157–174 ms | 2.58–2.68 s | 3.87–4.29 s | 9.8–10.4 s |
+| Spawned stdio | Warm | — | 22–26 ms | — | 0.14–0.16 s | 3.9–8.1 s |
+
+The same session after `azd ai agent sessions stop` resumed in a new container
+(runtime start 82 ms, session resume 158 ms) and recalled the earlier context.
+A one-tool turn made **2 model calls** of ~2.7k input tokens each (1.9 s and
+0.9 s model time). On Foundry, container readiness and model latency dominate;
+the runtime transport does not.
+
+**Documented** by the SDK team (not re-measured here): client + session + one
+turn dropped from 5.25 s (TypeScript CLI) to 55.3 ms (Rust core in-process),
+and memory for 10 clients from 1,383 MB to 126 MB
+([announcement](https://commandline.microsoft.com/microsoft-copilot-sdk-2-0-github/)).
+The `coding-agent` vs `empty` comparison was not re-measured on Foundry; the
+issue reporter measured ~2.9k vs ~2.7k first-turn input tokens locally.
+
+| | In-process (default) | Spawned stdio |
+|---|---|---|
+| Select | `RuntimeConnection.for_inprocess()` or `for_default()` | `RuntimeConnection.for_spawned_stdio()` or `COPILOT_SDK_DEFAULT_CONNECTION=stdio` with `for_default()` |
+| Crash isolation | **None** — a native runtime crash terminates the agent process | Runtime runs in a child process |
+| Process env / working directory per client | Not supported | Supported on the connection |
+| Native assets | Must match OS, CPU and C library (glibc vs musl) | Same staged runtime |
+| Measured on Foundry | See table | See table |
+
+Source: [In-process runtime](https://github.com/microsoft/copilot-sdk/blob/main/docs/setup/in-process-runtime.md),
+[v2 breaking changes](https://github.com/microsoft/copilot-sdk/blob/main/docs/v2-breaking-changes.md#in-process-runtime-hosting-by-default).
 
 ---
 
-## Runtime Pattern (GHCP SDK + Invocations)
+## Runtime Pattern (Copilot SDK 2.0 + Invocations)
 
-**Copy the reference template** at `references/container.py` into the project root.
-Then adapt `_load_mcp_servers()` for your MCP server configuration.
+> **MUST:** Copy verbatim from [`references/container.py`](references/container.py),
+> then replace the sample tools (`get_order`, `issue_refund`) with your own and
+> keep `available_tools` and `DENIED_TOOLS` in step with them.
 
 The template provides:
-1. `_init_byok()` / `_get_provider()` — BYOK auth with `DefaultAzureCredential`
-2. `_ensure_session()` — Creates/resumes `CopilotClient` session with provider, skills, MCP
-3. `_stream_response()` — Subscribes to session events, yields SSE
-4. `handle_invoke()` — `@app.invoke_handler` that returns `StreamingResponse`
+1. `_ensure_client()` — `CopilotClient(mode="empty", runtime=RuntimeConnection.for_default(base_directory=$HOME/.copilot-sdk), github={"use_logged_in_user": False})`
+2. `_session_options()` — the options re-supplied on **every** create and resume: model, named BYOK provider, permissions, hooks, streaming, tools and allow-list
+3. `_open_session()` — creates the SDK session keyed by `FOUNDRY_AGENT_SESSION_ID` on the first turn, resumes it from the journal afterwards
+4. `_stream_response()` — emits one `host.session` frame (`created`/`resumed` + timings), streams session events as SSE, then disconnects the session
+5. `handle_invoke()` — `@app.invoke_handler` returning `StreamingResponse`
 
 ```
-container.py → CopilotClient + InvocationAgentServerHost → port 8088
-  ├── BYOK auth (ai.azure.com scope)
-  ├── Skills via skill_directories parameter
-  ├── MCP servers via mcp_servers parameter
+container.py → CopilotClient(mode="empty") + InvocationAgentServerHost → port 8088
+  ├── in-process native runtime, home = $HOME/.copilot-sdk (persisted per Foundry session)
+  ├── BYOK: inference.providers[foundry] + bearer_token_provider (ai.azure.com scope)
+  ├── tools: define_tool + available_tools ["custom:get_order", "custom:issue_refund"]
+  ├── hooks: on_pre_tool_use denies issue_refund
   └── SSE streaming (no timeout on long tool loops)
 ```
 
 **Key points:**
 - `FOUNDRY_PROJECT_ENDPOINT` is **injected by the platform** — never declare it
   under the `azure.yaml` agent service's `environmentVariables` list (see
-  § "azure.yaml (unified GA deployment)")
-- BYOK scope is `https://ai.azure.com/.default` — NOT `cognitiveservices.azure.com`
-- Token is static per session — `_get_provider()` mints fresh token each session creation
-- `working_directory` should be `$HOME` (hosted agents sandbox filesystem at home dir)
+  § "azure.yaml (unified GA deployment)"). The template derives the account
+  URL from it and calls `<account>/openai/v1/`.
+- BYOK scope is `https://ai.azure.com/.default` — NOT `cognitiveservices.azure.com`.
+- The token callback runs before each model request, so long sessions no longer
+  need a fresh session per hour.
+- Foundry persists `$HOME` per hosted session across turns and idle periods
+  ([Manage hosted agent sessions](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions)),
+  so the SDK journal under `$HOME/.copilot-sdk/session-state/<id>` survives
+  container restarts.
 - `system_message` requires dict format: `{"mode": "replace", "content": "..."}`
-- `PermissionHandler.approve_all` auto-approves tool calls (required for unattended agents)
+  (loaded from `copilot-instructions.md` when present).
+- `PermissionHandler.approve_all` approves permission requests for unattended
+  agents; the `on_pre_tool_use` hook still runs first and can deny.
+- Optional remote MCP: set `MCP_SERVER_FQDN`; the template adds
+  `mcp.servers` and the `mcp:*` allow-list entry (documented, not exercised by
+  the CI fixture).
 
 ---
 
 ## Why Invocations Protocol (Not Responses)
 
-The GHCP SDK can also run behind `ResponsesHostServer` using `GitHubCopilotAgent`:
+The Copilot SDK could also run behind `ResponsesHostServer` using MAF's `GitHubCopilotAgent` adapter (SDK 1.x only — the adapter is not compatible with SDK 2.0):
 
 ```python
 # ⚠️ This pattern DOES NOT WORK for long tool loops on Foundry
@@ -167,7 +204,7 @@ only — do **not** add a `responses` protocol entry. `InvocationAgentServerHost
 only serves `/invocations`; the `/responses` path returns 404 even if declared.
 See the troubleshooting row **"responses protocol not declared" (bot 400)** —
 dual protocols don't work. **WHY:** `InvocationAgentServerHost` is the only
-server type the GHCP SDK runtime ships with; serving Responses requires
+server type the Copilot SDK hosted template uses; serving Responses requires
 switching to the MAF runtime (`ResponsesHostServer`) entirely. External
 callers (bot, eval scripts) must POST to the Invocations SSE endpoint
 directly, or use `azd ai agent invoke --protocol invocations`. If you need
@@ -180,141 +217,239 @@ directly, or use `azd ai agent invoke --protocol invocations`. If you need
 **Copy** `references/pyproject.toml` into your project root and update `name` and `version`.
 
 **Notes:**
-- `github-copilot-sdk` provides `CopilotClient`, session management, event types
-- `azure-ai-agentserver-invocations` provides `InvocationAgentServerHost`
-- `azure-ai-agentserver-core` pinned EXACT (`==2.0.0b7`) — it's a transitive dep of `-invocations` declared as `>=2.0.0b7` (unbounded upper); the exact pin stops a future core `b8+` from silently breaking fresh container builds
-- `azure-identity` pinned to avoid pulling beta versions
-- `prerelease = "if-necessary-or-explicit"` needed for beta agentserver package
+- `microsoft-copilot-sdk~=2.0.1` provides `CopilotClient`, `RuntimeConnection`, `define_tool`, session options and event types. **Uninstall `github-copilot-sdk` first** (`pip uninstall github-copilot-sdk`): both distributions install the same `copilot` import package ([identities](https://github.com/microsoft/copilot-sdk/blob/main/docs/v2-breaking-changes.md#microsoft-copilot-sdk-identities))
+- `azure-ai-agentserver-invocations~=1.3.0` provides `InvocationAgentServerHost`; it requires `azure-ai-agentserver-core>=2.3.0,<3.0.0`, capped here with `~=2.3.0`
+- `azure-identity~=1.27.0` supplies the async `DefaultAzureCredential` used by the token callback
+- `pydantic` backs the `@define_tool` parameter models
 
 ---
 
 ## Dockerfile
 
-**Copy** `references/Dockerfile` into your project root. No changes needed for most agents.
+**Copy** `references/Dockerfile` into your project root. It stages the SDK's
+native runtime at build time:
+
+```dockerfile
+ENV COPILOT_CLI_EXTRACT_DIR=/opt/copilot-runtime
+RUN python -m copilot download-runtime --in-process && chmod -R a+rX /opt/copilot-runtime
+ENV COPILOT_SKIP_CLI_DOWNLOAD=1
+```
+
+**Why:** SDK 2.0 Python wheels do not bundle the native runtime; without
+pre-staging, the SDK downloads it from GitHub Releases on first use into
+`~/.cache/copilot-sdk/...`
+([Python README § Runtime](https://github.com/microsoft/copilot-sdk/blob/main/python/README.md#runtime)).
+Foundry hosted agents run with `HOME=/home/session`, so a runtime downloaded at
+build time into `/root/.cache` is not found at run time. A fixed
+`COPILOT_CLI_EXTRACT_DIR` makes the build-time and run-time paths identical, and
+`COPILOT_SKIP_CLI_DOWNLOAD=1` turns a missing runtime into a startup error
+instead of a silent download.
+
+- Without pre-staging, the container needs egress to GitHub Releases on its first request.
+- Alpine/musl base images need the musl native assets; the reference uses `python:3.12-slim` (glibc).
+- `azure.yaml` sets `docker.remoteBuild: true` so `azd deploy` builds on ACR, not on a local Docker daemon.
 
 ---
 
 ## BYOK Authentication Deep Dive
 
-BYOK (Bring Your Own Key) lets `CopilotClient` use your Foundry model deployment
-instead of GitHub's hosted models. No `GITHUB_TOKEN` needed.
+BYOK lets the Copilot runtime call your Foundry model deployment instead of
+GitHub-hosted models. No `GITHUB_TOKEN` needed.
 
 ### How It Works
 
 ```
-CopilotClient.create_session(provider={...})
-  └── Routes LLM calls to your Foundry project endpoint
-      └── Uses bearer token from DefaultAzureCredential
-          └── Scope: https://ai.azure.com/.default
+create_session / resume_session(inference={providers, models}, github={"capi": {"enabled": False}})
+  └── runtime calls bearer_token_provider before each model request
+      └── DefaultAzureCredential → token for https://ai.azure.com/.default
+          └── POST https://<account>.services.ai.azure.com/openai/v1/responses
 ```
 
-### Provider Configuration
+### Provider configuration (SDK 2.0)
 
-`copilot.ProviderConfig` is a `TypedDict` — at runtime it produces a
-plain `dict`, so the "class" form and the "dict" form below are byte-identical
-runtime objects. Use the class form when you want IDE / typing help; use the
-dict form when you want a one-liner.
-
-What actually matters is the **values**: `type="azure"` + bare endpoint is the
-PRIMARY shape (matches the official Microsoft sample, ~2-3× faster); the
-legacy `type="openai"` + `/openai/v1/` is still accepted for backward compat.
+The singular `provider` option and `ProviderConfig` are gone. Register a
+**named connection** (`NamedProviderConfig`) and a **model definition** under
+`inference`, then select the model as `provider/id`
+([named providers](https://github.com/microsoft/copilot-sdk/blob/main/docs/v2-breaking-changes.md#named-provider-connections-and-model-definitions),
+[managed identity BYOK](https://github.com/microsoft/copilot-sdk/blob/main/docs/setup/azure-managed-identity.md)):
 
 ```python
-# RECOMMENDED — class form (TypedDict), gives you typing + IDE completion.
-from copilot import ProviderConfig
+from azure.identity.aio import DefaultAzureCredential
+from copilot.session import NamedProviderConfig
 
-provider = ProviderConfig(
-    type="azure",                          # SDK adds api-version itself
-    base_url=FOUNDRY_ENDPOINT,             # BARE project endpoint — no /openai/v1/
-    wire_api="responses",
-    bearer_token=token.token,              # from DefaultAzureCredential
+credential = DefaultAzureCredential()
+
+async def get_token(_args) -> str:          # raw token, no "Bearer " prefix
+    return (await credential.get_token("https://ai.azure.com/.default")).token
+
+session_opts = dict(
+    model="foundry/chat",                   # canonical provider/id
+    github={"capi": {"enabled": False}},    # BYOK-only catalog
+    inference={
+        "providers": [NamedProviderConfig(
+            name="foundry", type="openai", wire_api="responses",
+            base_url=f"{ACCOUNT_URL}/openai/v1/",   # https://<account>.services.ai.azure.com
+            bearer_token_provider=get_token,
+        )],
+        "models": [{"provider": "foundry", "id": "chat",
+                    "model_id": DEPLOYMENT, "wire_model": DEPLOYMENT}],
+    },
 )
 ```
 
-```python
-# LEGACY — same wire shape, type='openai' kept for backward compat (2-3× slower).
-provider = {
-    "type": "openai",
-    "base_url": f"{FOUNDRY_ENDPOINT}/openai/v1/",  # must end with /openai/v1/
-    "bearer_token": token.token,
-    "wire_api": "responses",
-}
-```
+| Field | Meaning |
+|-------|---------|
+| Connection `name` | Stable connection id (no `/`); model definitions reference it as `provider` |
+| Model `id` | Provider-local id; select it as `foundry/chat` |
+| `model_id` | Base model used for capability lookup (defaults to `id`) |
+| `wire_model` | Deployment name sent to Foundry (defaults to `id`) |
+| `bearer_token_provider` | Called before each request; takes precedence over `bearer_token`/`api_key`; never persisted |
 
-### Provider shape decision matrix
-
-Measured against `gpt-5.4-mini` on a live Foundry project (May 2026):
-
-| `type` | `base_url` suffix | Result | Latency |
-|--------|-------------------|--------|---------|
-| `"azure"` | bare endpoint | ✅ **Recommended** | ~2.6s |
-| `"azure"` | `/openai/v1/` | ✅ Works | ~7.9s |
-| `"openai"` | `/openai/v1/` | ✅ Legacy compat | ~6.9s |
-| `"openai"` | bare endpoint | ❌ `400 Missing api-version` | n/a |
-
-`github-copilot-sdk` `1.0.1` (GA, this skill) and prior `0.3.0` / `1.0.0b*`
-preview lines all accept both `type="azure"` and the legacy
-`type="openai"` shapes; the legacy dict form is preserved across releases
-for backward compatibility. The 1.0 GA constructor is flat — pass
-`github_token=...` directly to `CopilotClient(...)` (no `SubprocessConfig`
-wrapper; `auto_start` kwarg removed — call `await client.start()` explicitly).
-The public import surface as of the GA release is
-`from copilot import CopilotClient, PermissionHandler, ProviderConfig` and
-`from copilot.session_events import SessionEventType` (matches the official
-Microsoft sample's `main.py`) — see `references/container.py`.
+`github.capi.enabled: False` keeps the catalog BYOK-only. Adding a provider no
+longer disables CAPI implicitly. An alternative to model definitions is
+`inference.default_provider="foundry"` with an unqualified `model` (pass-through).
 
 ### Common BYOK Mistakes
 
 | Mistake | Symptom | Fix |
 |---------|---------|-----|
-| Wrong scope | 401 Unauthorized | Use `ai.azure.com` not `cognitiveservices.azure.com` |
-| `type="openai"` + bare endpoint | `400 Missing api-version` | Either switch to `type="azure"` + bare, or append `/openai/v1/` |
-| Token not refreshed | 401 after ~1h | Mint fresh token per session in `_get_provider()` |
+| Wrong scope | 401 Unauthorized | Use `ai.azure.com`, not `cognitiveservices.azure.com` |
+| Legacy `provider=` keyword (1.x) | Python: `TypeError: ... unexpected keyword argument 'provider'` | Move to `inference.providers` + `inference.models` |
+| Resume without re-supplying `inference` | `Previously registered provider model 'foundry/chat' is no longer registered` (reported) | Pass the same providers and models on every resume — credentials and callbacks are never persisted |
+| `github.capi` left enabled with a BYOK-only deployment | Model resolves against the Copilot catalog | Set `github={"capi": {"enabled": False}}` |
 | Permission error during deploy or invoke | 403 / `PermissionDenied` | Hard FAIL except the exact immediate-post-active readiness envelope documented under § "Invoking the Agent". That narrow case retries the same path; all others require root-cause investigation. The two required instance grants (account + project) are a documented prerequisite, not an invoke-time workaround - do not add further grants to route around a failure |
 
 ---
 
-## CopilotClient Session Parameters
+## Session options (SDK 2.0)
 
 ```python
-# Recommended pattern (matches official Microsoft sample): explicit start().
-# As of github-copilot-sdk 1.0 GA, CopilotClient takes flat kwargs — no
-# SubprocessConfig wrapper, no auto_start. Construct, then await start().
-client = CopilotClient()
+client = CopilotClient(
+    mode="empty",                                   # mandatory: "empty" or "coding-agent"
+    runtime=RuntimeConnection.for_default(base_directory=STATE_DIR),
+    github={"use_logged_in_user": False},           # BYOK host: no GitHub sign-in
+)
 await client.start()
 
-session = await client.create_session(
-    provider=provider,                    # ProviderConfig OR dict — see "Provider Configuration"
-    model="gpt-5.4-mini",                 # Foundry model deployment name
-    system_message={                      # MUST be dict, not string
-        "mode": "replace",
-        "content": "You are a helpful assistant.",
-    },
-    skill_directories=["/app/skills"],    # Paths to SKILL.md directories
-    mcp_servers=[                         # MCP server configs (list[dict] or dict[str, dict])
-        {"name": "playwright", "url": "https://my-mcp.azurecontainerapps.io/mcp"},
-    ],
-    working_directory=str(Path.home()),   # Must be $HOME for hosted agents
-    streaming=True,                       # Enable streaming events
-    on_permission_request=PermissionHandler.approve_all,  # Auto-approve tools
+session = await client.create_session(              # resume_session(sid, **same options)
+    session_id=sid,
+    model="foundry/chat",
+    working_directory=str(Path.home()),
+    system_message={"mode": "replace", "content": "You are a helpful assistant."},
+    github={"capi": {"enabled": False}},
+    inference={"providers": [...], "models": [...]},
+    permissions={"on_request": PermissionHandler.approve_all},
+    hooks={"handlers": {"on_pre_tool_use": on_pre_tool_use}},
+    events={"streaming": True},
+    tools={"definitions": [get_order], "available_tools": ["custom:get_order"]},
+    skills={"directories": ["/app/skills"]},        # optional
+    mcp={"servers": {"remote": {"type": "http", "url": "https://<fqdn>/mcp", "tools": ["*"]}}},  # optional
 )
 ```
 
-### Session Event Types
+Option mapping from 1.x (Python names;
+[full table](https://github.com/microsoft/copilot-sdk/blob/main/docs/v2-breaking-changes.md#restructured-session-options)):
+
+| SDK 1.x | SDK 2.0 |
+|---------|---------|
+| `provider=ProviderConfig(...)` | `inference={"providers": [NamedProviderConfig(...)], "models": [...]}` |
+| `on_permission_request=` | `permissions={"on_request": ...}` |
+| `streaming=True` | `events={"streaming": True}` |
+| `tools=[...]`, `available_tools=[...]` | `tools={"definitions": [...], "available_tools": [...]}` |
+| `skill_directories=[...]` | `skills={"directories": [...]}` |
+| `mcp_servers=...` | `mcp={"servers": {name: config}}` (dict keyed by server name) |
+| `hooks=...` | `hooks={"handlers": {...}}` |
+| `github_token=` on the client | `github={"token": ...}` on the client or per session |
+| `CopilotClient()` | `CopilotClient(mode="coding-agent" \| "empty")` |
+
+Imports: `from copilot import CopilotClient, RuntimeConnection, define_tool`,
+`from copilot.session import NamedProviderConfig, PermissionHandler`,
+`from copilot.session_events import SessionEventType`. `copilot.generated` is
+now private (`copilot._generated`); use the public modules.
+
+---
+
+## Choosing mode and multi-tenant patterns
+
+Source: [Multi-tenancy and server deployments](https://github.com/microsoft/copilot-sdk/blob/main/docs/setup/multi-tenancy.md).
+
+| | `mode="empty"` (template) | `mode="coding-agent"` |
+|---|---|---|
+| Ambient tools | None — each session opts in via `tools.available_tools` | CLI-like coding tools, including host filesystem access |
+| Persistence | Client must set `base_directory` or `session_fs` | Defaults to `~/.copilot` |
+| Intended for | Services, shared or multi-user hosts | Single-user coding assistants |
+
+**Patterns proven in the template (live, 2026-11-20):**
+
+1. **Explicit storage.** `CopilotClient(mode="empty")` raises
+   `ValueError ... requires base_directory, session_fs, or a TcpRuntimeConnection`
+   without one. The template uses `$HOME/.copilot-sdk`; Foundry already isolates
+   `$HOME` per hosted session. On a shared host, give each tenant its own
+   `base_directory` or route storage through `session_fs`.
+2. **Allow-list every session.** In empty mode, `create_session` and
+   `resume_session` raise `ValueError` without `tools.available_tools`.
+   Name tools by source: `custom:<tool>`, `mcp:<server>-<tool>` (or `mcp:*`),
+   `builtin:<tool>`. Avoid `builtin:*` on shared hosts.
+3. **Map the Foundry session to the SDK session.** Use
+   `FOUNDRY_AGENT_SESSION_ID` as the SDK `session_id`; the journal lives in
+   `base_directory/session-state/<id>/`. The template resumes when that
+   directory exists and creates the session otherwise.
+4. **Re-supply on every resume.** Providers and token callbacks, tool
+   definitions, hooks and permission handlers are never persisted. Pass the
+   same option set to `resume_session` — the template builds it in one
+   function and disconnects after each turn, so every later turn is a genuine
+   resume (also after a container restart).
+5. **`onPreToolUse` as a governance gate.** Return
+   `{"permissionDecision": "deny", "permissionDecisionReason": "..."}`; the
+   handler never runs and the stream shows `tool.execution_complete` with
+   `success: false` and `error.code: "denied"`. The model then explains the
+   refusal. Live output:
+   `Denied by preToolUse hook: issue_refund requires human approval and is blocked for this agent`.
+6. **Per-session GitHub identity** (only when CAPI models or GitHub tools are
+   used): pass `github={"token": ...}` or `github={"token_provider": ...}` on
+   `create_session`/`resume_session` instead of sharing one client token.
+
+---
+
+## Migrating from SDK 1.x
+
+1. `pip uninstall github-copilot-sdk && pip install "microsoft-copilot-sdk~=2.0.1"`.
+2. Add `mode=` to `CopilotClient`. Choose `"empty"` for hosted agents.
+3. Replace `provider=ProviderConfig(...)` with named `inference.providers` +
+   `inference.models`, and select `provider/id`. In Python the old keyword
+   raises `TypeError`; the issue reporter observed TypeScript silently
+   ignoring it, after which the first send failed with
+   `Model "gpt-5.4-mini" is not available`.
+4. Nest the remaining options (table in § "Session options (SDK 2.0)").
+5. Stage the native runtime in the Dockerfile (§ "Dockerfile").
+6. Re-supply providers, tools and hooks on every resume.
+
+**Staying on 1.x.** Microsoft Agent Framework's Copilot adapters
+(`agent-framework-github-copilot`, .NET `Microsoft.Agents.AI.GitHub.Copilot`)
+depend on the 1.x SDK and are not compatible with 2.0; do not install them
+alongside `microsoft-copilot-sdk`
+([MAF integration](https://github.com/microsoft/copilot-sdk/blob/main/docs/integrations/microsoft-agent-framework.md),
+[PyPI](https://pypi.org/project/agent-framework-github-copilot/)). Such apps
+should pin `github-copilot-sdk~=1.0` and use skill version 3.0.0 of this
+guide until compatible adapters ship.
+
+---
+
+## Session Event Types
 
 | Event Type | Meaning | Action |
 |------------|---------|--------|
+| `host.session` | Emitted by the template, not the SDK: `state` (`created`/`resumed`), runtime start and session-open timings | Evidence of resume |
 | `SESSION_IDLE` | Response complete | Stop streaming, yield `done` event |
 | `SESSION_ERROR` | Agent error | Yield error event, stop |
 | `assistant.message` | Final assistant response | Contains full response text |
 | `assistant.message_delta` | Streaming content chunk | Accumulate for progressive display |
 | `assistant.streaming_delta` | Raw streaming delta | Lower-level than message_delta |
-| `assistant.reasoning` | Reasoning trace | Full reasoning block |
-| `assistant.reasoning_delta` | Reasoning chunk | Streaming reasoning |
-| `tool.execution_start` | Tool call started | Log for debugging |
-| `tool.execution_complete` | Tool call finished | Log for debugging |
-| `assistant.turn_start` | New turn | Track turn count |
-| `assistant.turn_end` | Turn complete | May have more turns |
+| `tool.execution_start` | Tool call started (`toolName`, `arguments`) | Log for debugging |
+| `tool.execution_complete` | Tool call finished; `success: false` + `error.code: "denied"` when a hook denied it | Audit |
+| `hook.start` / `hook.end` | Hook invocation (`hookType`, e.g. `preToolUse`) | Audit |
+| `assistant.usage` | Per-model-call tokens and duration | Cost / latency tracking |
+| `assistant.turn_start` / `assistant.turn_end` | Turn boundaries | Track turn count |
 
 ---
 
@@ -466,10 +601,10 @@ The old **two-file** contract (`agent.yaml` + a separately hand-wired
 source of truth for both the Foundry project/model deployment and the
 hosted agent itself — declared as a graph of `services`, each with a `host`
 field and a `uses` list of dependencies. This is the same unified shape
-`foundry-hosted-agents` uses, adapted for the GHCP SDK's Invocations
+`foundry-hosted-agents` uses, adapted for the Copilot SDK's Invocations
 protocol instead of MAF's Responses protocol.
 
-> **MUST:** Copy verbatim from [`references/yaml/azure.yaml`](references/yaml/azure.yaml). Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the canonical `azure.ai.project` + `azure.ai.agent` service pair for a container-built GHCP SDK hosted agent connecting to a **pre-provisioned** Foundry project.
+> **MUST:** Copy verbatim from [`references/yaml/azure.yaml`](references/yaml/azure.yaml). Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the canonical `azure.ai.project` + `azure.ai.agent` service pair for a container-built Copilot SDK hosted agent connecting to a **pre-provisioned** Foundry project.
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
@@ -489,6 +624,8 @@ services:
     host: azure.ai.agent
     project: .
     language: docker
+    docker:
+      remoteBuild: true
     uses:
       - ai-project
     kind: hosted
@@ -512,8 +649,9 @@ infra:
 
 | Rule | Why |
 |------|-----|
+| `docker.remoteBuild: true` | Builds the image on ACR. Without it, azd 1.37.3 + `azure.ai.agents` 1.2.0 built locally when a Docker daemon was available (observed 2026-11-20) |
 | `kind: hosted` on the `azure.ai.agent` service | Marks it as a containerized/source-built hosted agent (as opposed to a Foundry Agent Service prompt agent) |
-| Protocol `invocations`, version `2.0.0` | Current GA protocol + version for the GHCP SDK's `InvocationAgentServerHost`. Do NOT add a `responses` protocol entry — see § "Why Invocations Protocol (Not Responses)" |
+| Protocol `invocations`, version `2.0.0` | Current GA protocol + version for the Copilot SDK template's `InvocationAgentServerHost`. Do NOT add a `responses` protocol entry — see § "Why Invocations Protocol (Not Responses)" |
 | `container.resources` nested object | NOT a top-level `resources:` list |
 | NO `FOUNDRY_PROJECT_ENDPOINT` in `environmentVariables` | Reserved — the platform injects it automatically, along with `FOUNDRY_PROJECT_ARM_ID`, `FOUNDRY_AGENT_NAME`, `FOUNDRY_AGENT_VERSION`, `FOUNDRY_AGENT_SESSION_ID`, and `APPLICATIONINSIGHTS_CONNECTION_STRING`. Declaring any of them yourself is redundant at best and risks shadowing the platform value |
 | `uses: [ai-project]` on the agent service | Forms the dependency graph `azd` resolves at provision/deploy time — the agent can't reference the project's model deployment without it |
@@ -772,9 +910,12 @@ The **deploying user** still needs a role to create/update the agent:
 |------|-------|-----|
 | `Foundry Project Manager` | Foundry project | Data-plane permissions to create/update agents |
 
-`azd` handles the ACR pull role (**Container Registry Repository
-Reader** on the project's managed identity) automatically as part of
-`azd deploy`.
+The project's managed identity must be able to pull from the registry. On a
+direct-copy deploy to a registry that `azd` did not provision, deployment
+failed with `[ImageError] Container registry authentication failed` until the
+project managed identity was granted `AcrPull` on the registry (observed
+2026-11-20); the guided `azd ai agent init --deploy-mode container` path wires
+the registry for you (Azure/azure-dev #8981).
 
 ---
 
@@ -786,15 +927,18 @@ Reader** on the project's managed identity) automatically as part of
 | **`send_and_wait()` timeout** | 60s default + 120s gateway limit | Use Invocations protocol instead of ResponsesHostServer |
 | **SSE response 0 chars** | Parser only captures `assistant.message` | Also capture `assistant.message_delta` as fallback |
 | **Task Adherence eval 0%** | Using `gpt-5.4` as judge model | Use `gpt-5.4-mini` as judge |
-| **Agent feels much slower than expected** | CopilotClient internal-turn overhead (20-34 internal calls per query) | Use MAF runtime instead — see `## ⚠️ Performance Caveat: Per-Query Overhead` |
-| **CopilotClient needs GITHUB_TOKEN** | Not using BYOK provider | Pass `provider` dict to `create_session()` |
+| **Agent feels much slower than expected** | Still on SDK 1.x or `mode="coding-agent"` | Use SDK 2.0 `mode="empty"` — see § "Performance: SDK 2.0 in-process runtime" |
+| **CopilotClient needs GITHUB_TOKEN** | No BYOK provider, or CAPI still enabled | Pass `inference.providers`/`models`, `github={"capi": {"enabled": False}}`, and `github={"use_logged_in_user": False}` on the client |
+| **`mode is required and must be 'coding-agent' or 'empty'`** / `TypeError` on `CopilotClient()` | SDK 1.x constructor on 2.0 | `CopilotClient(mode="empty", runtime=...)` |
+| **`CopilotClient(mode='empty') requires base_directory, session_fs, or a TcpRuntimeConnection`** | Empty mode without explicit storage | `RuntimeConnection.for_default(base_directory=...)` |
+| **`create_session was called without available_tools`** | Empty mode needs an explicit allow-list on every create and resume | Pass `tools={"available_tools": [...]}` |
+| **`Copilot runtime bundle is not cached in /home/session/.cache/... and automatic downloads are disabled`** (HTTP 502 `Failed to forward request` to the caller) | Runtime staged at build time under `/root/.cache`; Foundry runs with `HOME=/home/session` | Set `COPILOT_CLI_EXTRACT_DIR` before `python -m copilot download-runtime --in-process` (see § "Dockerfile") |
+| **`[ImageError] Container registry authentication failed`** | Project managed identity cannot pull from a BYO registry | Grant `AcrPull` on the registry to the project managed identity, or use the guided init path |
 | **`system_message` ignored** | Passed as string | Must be dict: `{"mode": "replace", "content": "..."}` |
-| **Skills not loading** | Wrong path format | Use absolute paths in `skill_directories` list |
-| **Agent crashes on startup** | Missing `azure-ai-agentserver-invocations` | Add to dependencies, use `prerelease = "if-necessary-or-explicit"` |
+| **Skills not loading** | Wrong option or path | Use absolute paths in `skills={"directories": [...]}` |
+| **Agent crashes on startup** | Missing `azure-ai-agentserver-invocations` | Add it to dependencies (see `references/pyproject.toml`) |
 | **Gateway timeout (502/504)** | Using Responses protocol for long queries | Switch to Invocations protocol |
-| **Token expired during long query** | BYOK token static per session | Token has ~1h validity; for longer sessions, create new session |
-| **Token expired during eval runs** | Long eval runs (many scenarios) exhaust the BYOK token | Refresh the provider token per invocation: call `_get_provider()` fresh before each `_ensure_session()`, or create a new session every ~30 min |
-| **Container can't resolve packages** | pip doesn't handle pre-release deps | Use `uv` with pre-release settings in `[tool.uv]` |
+| **401 after ~1h** | Static `bearer_token` on the provider | Use `bearer_token_provider`; the runtime calls it before each request |
 | **Missing `[tool.setuptools] packages = []`** | uv resolution fails without it | Add to pyproject.toml (see `references/pyproject.toml`) |
 | **CognitiveServices API version wrong** | Using old `2024-10-01` | Use `2025-10-01-preview` for agent management APIs |
 | **Hooks fail on Windows** | `shell: sh` in a custom azd hook | Use `shell: pwsh` for cross-platform |
@@ -804,7 +948,7 @@ Reader** on the project's managed identity) automatically as part of
 | **ACR push 403 / RBAC error** | Deploying user lacks `AcrPush` on the target ACR | Assign `AcrPush` on the ACR, or use the guided `azd ai agent init --deploy-mode container` path, which wires the registry automatically (Azure/azure-dev #8981) |
 | **Evals show no telemetry** | AppInsights not connected to Foundry account | Create `AppInsights` connection on the **account** (not project). Category: `AppInsights`, target: ARM resource ID, metadata: `ApiType: Azure`. `APPLICATIONINSIGHTS_CONNECTION_STRING` is reserved — platform injects it. |
 | **Agent traces missing** | Agent identity lacks telemetry RBAC | Assign `Monitoring Metrics Publisher` on AppInsights to the agent identity (from `azd ai agent show`). Project MI needs `Log Analytics Data Reader` on Log Analytics workspace. |
-| **gpt-4.1 encrypted content error** | gpt-4.1 deprecated, doesn't support encrypted content required by GHCP SDK | Default to `gpt-5.4-mini` or `gpt-5.4`. Update `AZURE_AI_MODEL_DEPLOYMENT_NAME` in `azure.yaml` / azd env. |
+| **gpt-4.1 encrypted content error** | gpt-4.1 deprecated, doesn't support encrypted content required by the Copilot SDK | Default to `gpt-5.4-mini` or `gpt-5.4`. Update `AZURE_AI_MODEL_DEPLOYMENT_NAME` in `azure.yaml` / azd env. |
 | **`azd deploy` says "deployed in <1s" and nothing ships** | Copied a stripped-down `azure.yaml` missing the `services:` block | Use the canonical `references/yaml/azure.yaml` verbatim — see § "azure.yaml (unified GA deployment)" |
 
 ---
@@ -817,22 +961,23 @@ MAF (Responses Protocol):
     └── Request/response: caller waits for full response
     └── Timeout: ~120s (Foundry gateway)
 
-GHCP SDK (Invocations Protocol):
-  container.py → CopilotClient + InvocationAgentServerHost → port 8088
+Copilot SDK 2.0 (Invocations Protocol):
+  container.py → CopilotClient(mode="empty") + InvocationAgentServerHost → port 8088
     └── SSE streaming: events flow continuously
     └── Timeout: unlimited (connection kept alive by events)
 ```
 
 ### Decision Matrix
 
-| Factor | Choose MAF | Choose GHCP SDK |
-|--------|-----------|----------------|
+| Factor | Choose MAF | Choose Copilot SDK 2.0 |
+|--------|-----------|------------------------|
 | Tool loop duration | <120s | >120s |
-| Custom `@tool` functions | ✅ Required | ❌ Not supported |
-| Foundry Toolbox | ✅ `MCPStreamableHTTPTool` (was `get_toolbox()`, removed 1.3.0) | ❌ Not available |
+| Custom tools | ✅ `@tool` | ✅ `@define_tool` + `tools.available_tools` |
+| Foundry Toolbox | ✅ `MCPStreamableHTTPTool` (was `get_toolbox()`, removed 1.3.0) | ❌ Not available (remote MCP via `mcp.servers`) |
 | Streaming output | ❌ Response only | ✅ Event stream |
-| Progressive skills | ✅ `SkillsProvider.from_paths()` (or legacy concat) | ✅ `SkillsProvider` |
-| MCP tools | `client.get_mcp_tool()` | `mcp_servers` parameter |
-| Auth complexity | Low (DAC → FoundryChatClient) | Medium (BYOK token minting) |
-| Packages | Stable releases | Pre-release beta |
+| Progressive skills | ✅ `SkillsProvider.from_paths()` (or legacy concat) | ✅ `skills.directories` / `skills.provider` |
+| MCP tools | `client.get_mcp_tool()` | `mcp.servers` + `mcp:` allow-list |
+| Tool governance | Middleware | `hooks.handlers.on_pre_tool_use` |
+| Auth complexity | Low (DAC → FoundryChatClient) | Medium (named BYOK provider + token callback) |
+| Packages | Stable releases | Stable SDK (`microsoft-copilot-sdk` 2.0); agentserver packages stable 1.3/2.3 |
 | Deploy shape | Unified `azure.yaml` (`foundry-hosted-agents`) | Unified `azure.yaml` (this skill) — same GA shape, different protocol/runtime |

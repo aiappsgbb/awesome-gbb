@@ -41,14 +41,13 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
 
     def test_skill_version_and_legacy_deploy_contract(self) -> None:
         frontmatter = yaml.safe_load(self.skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "3.0.0")
+        self.assertEqual(frontmatter["metadata"]["version"], "4.0.0")
         self.assertLessEqual(len(frontmatter["description"]), 1024)
         for stale in (
             "## agent.yaml",
             "references/agent.yaml",
             "azd up",
             "azd provision",
-            "remoteBuild",
             "2025-11-15-preview",
             "Manual account-scope assignment",
             "ACA app",
@@ -92,6 +91,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
                 }
             ],
         )
+        self.assertEqual(agent["docker"], {"remoteBuild": True})
         self.assertEqual(data["infra"]["provider"], "microsoft.foundry")
         self.assertNotIn("env", agent)
 
@@ -428,10 +428,11 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
 
     def test_pin_audit_trail_is_current_dated(self) -> None:
         frontmatter = yaml.safe_load(self.pin.split("---")[1])
-        # The live model-inference correction was validated on 2026-08-05, not
-        # 2026-07-14 — the audit metadata must reflect the real validation date.
-        self.assertEqual(str(frontmatter["last_validated"]), "2026-08-05")
-        self.assertEqual(frontmatter["validated_by"], "copilot-bot")
+        # SDK 2.0 refresh validated live on 2026-11-20; the 2026-08-05 RBAC
+        # correction stays in the audit trail as a prior validation.
+        self.assertEqual(str(frontmatter["last_validated"]), "2026-11-20")
+        self.assertEqual(frontmatter["validated_by"], "ricchi")
+        self.assertIn("`2026-11-20`", self.pin)
         self.assertIn("`2026-08-05`", self.pin)
         self.assertNotIn("2026-07-14b", self.pin)
 
@@ -971,17 +972,44 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
             self.workflow.index("# Same Pattern 12 eval ladder"),
         )
 
-    def test_container_uses_pinned_public_imports(self) -> None:
-        self.assertIn(
-            "from copilot import CopilotClient, PermissionHandler, ProviderConfig",
-            self.container,
-        )
-        self.assertIn(
+    def test_container_uses_sdk2_public_surface(self) -> None:
+        for token in (
+            "from copilot import CopilotClient, RuntimeConnection, define_tool",
+            "from copilot.session import NamedProviderConfig, PermissionHandler",
             "from copilot.session_events import SessionEventType",
-            self.container,
-        )
-        self.assertNotIn("copilot.generated.session_events", self.container)
-        self.assertNotIn("from copilot.session import", self.container)
+            'mode="empty"',
+            '"available_tools"',
+            '"on_pre_tool_use"',
+            "bearer_token_provider=",
+            "resume_session(",
+            "await session.disconnect()",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.container)
+        self.assertNotRegex(self.container, r"(?<!Named)ProviderConfig\(")
+        for legacy in ("copilot.generated", "provider=provider", "on_permission_request"):
+            with self.subTest(legacy=legacy):
+                self.assertNotIn(legacy, self.container)
+        pyproject = (SKILL_DIR / "references" / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('"microsoft-copilot-sdk~=2.0.1"', pyproject)
+        self.assertNotIn('"github-copilot-sdk', pyproject)
+        dockerfile = (SKILL_DIR / "references" / "Dockerfile").read_text(encoding="utf-8")
+        extract = dockerfile.index("ENV COPILOT_CLI_EXTRACT_DIR=")
+        download = dockerfile.index("python -m copilot download-runtime --in-process")
+        skip = dockerfile.index("ENV COPILOT_SKIP_CLI_DOWNLOAD=1")
+        self.assertLess(extract, download)
+        self.assertLess(download, skip)
+
+    def test_fixture_proves_tool_resume_and_deny_turns(self) -> None:
+        for token in (
+            "TURN1_OK state=created",
+            "TURN2_OK state=resumed tools=-",
+            "TURN3_OK state=resumed",
+            "/tmp/ghcp-hosted-agents-validate-turn.py",
+            '"denied"',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.fixture)
 
     def test_upstream_pin_retires_legacy_known_issues(self) -> None:
         pin_frontmatter = yaml.safe_load(self.pin.split("---")[1])
