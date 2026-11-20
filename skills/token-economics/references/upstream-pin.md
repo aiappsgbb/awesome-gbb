@@ -11,17 +11,22 @@ upstream:
     service-tier parameters, called through the `openai` Python SDK against
     Azure OpenAI v1 endpoints with Entra ID. Tool definitions are sent as
     plain dicts, so the SDK only needs Responses passthrough support.
+    Since v1.2.0 also wraps model router (Auto and model-router deployments,
+    per-request routing_config via extra_headers/extra_body) and prices it
+    from the public Azure Retail Prices API (stdlib urllib, no SDK).
 
 packages:
   - name: openai
     source: pypi
-    version: "3.26.0"
+    version: "3.56.0"
     upstream_changelog: https://github.com/openai/openai-python/releases
     notes: |
-      Live-validated version for tool_search on Azure (2026-10-14).
+      Live-validated for tool_search (3.26.0 on 2026-10-14, 3.56.0 on
+      2026-11-20) and model router (3.56.0 on 2026-11-20). 3.56.0 was the
+      newest release available on the validation host's package feed.
   - name: azure-identity
     source: pypi
-    version: "1.26.0"
+    version: "1.27.0"
     upstream_changelog: https://pypi.org/project/azure-identity/#history
     notes: |
       DefaultAzureCredential / AzureCliCredential + get_bearer_token_provider.
@@ -34,6 +39,12 @@ docs_to_revalidate:
   - https://learn.microsoft.com/azure/foundry/openai/how-to/responses
   - https://learn.microsoft.com/azure/foundry/openai/how-to/flex-processing
   - https://learn.microsoft.com/microsoft-cloud/dev/dev-proxy/concepts/llm-rate-limits
+  - https://learn.microsoft.com/azure/foundry/openai/concepts/model-router
+  - https://learn.microsoft.com/azure/foundry/openai/concepts/model-router-how-it-works
+  - https://learn.microsoft.com/azure/foundry/openai/how-to/model-router-routing-controls
+  - https://learn.microsoft.com/azure/foundry/openai/how-to/monitor-model-router
+  - https://learn.microsoft.com/azure/foundry/openai/how-to/model-router-ai-gateway
+  - https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices
 
 known_issues:
   - id: KI-001
@@ -84,6 +95,26 @@ known_issues:
     upstream_url: null
     status: documented
     notes: Documented in SKILL.md § Other levers and § Measure first.
+  - id: KI-006
+    title: "Docs do not say whether cached input tokens pay the router fee"
+    description: |
+      The fee is documented per 1M input tokens. measure_router.py charges
+      all input by default; --fee-excludes-cached gives the other bound.
+      Resolve against billed Model Routers meters in Cost Management.
+    upstream_url: null
+    status: documented
+    notes: Documented in SKILL.md § What you pay.
+  - id: KI-007
+    title: "Retail meter names for pool models are irregular"
+    description: |
+      OpenAI meters use abbreviations ("5.4 mini Inp Gl", "GPT 5 Nano Inpt
+      Glbl"); DeepSeek V4.1 Flash appears under two products with different
+      cached prices and Grok 4.1 meters do not match the routed model name
+      (2026-11-20). The script matches strictly and reports unpriced models
+      (exit 1) instead of guessing; supply --price-file for those.
+    upstream_url: null
+    status: documented
+    notes: Documented in SKILL.md § Measure the router on your workload.
 
 validation:
   requires:
@@ -94,7 +125,7 @@ validation:
     set -euo pipefail
     python -m venv .venv-token-economics
     . .venv-token-economics/bin/activate
-    pip install --quiet "openai~=3.26.0" "azure-identity~=1.26.0"
+    pip install --quiet "openai~=3.56.0" "azure-identity~=1.27.0"
     SKILL_PY="$PIN_VALIDATION_REPO_ROOT/skills/token-economics/references/python"
     PYTHONPATH="$SKILL_PY" python -c "
     import measure_tool_search as m
@@ -113,6 +144,33 @@ validation:
     print('contract ok: input-equivalent cost')
     assert m.input_equivalent({'input_tokens': 1000, 'cached_tokens': 600, 'cache_write_tokens': 300, 'output_tokens': 10}, 0.1, 6, 1.25) == 595.0
     print('contract ok: cache-write cost')
+    import measure_router as r
+    print('import ok: measure_router')
+    assert r.base_model('gpt-5.6-luna-2026-07-09') == 'gpt-5.6-luna'
+    assert r.classify_meter('5.4 mini Inp Gl 1M Tokens', 'gpt-5.4-mini') == ('input', 'global')
+    assert r.classify_meter('GPT 5 Nano cchd Inpt DZone 1M Tokens', 'gpt-5-nano') == ('cached', 'datazone')
+    assert r.classify_meter('6-luna ShortCo Opt Std Gl 1M Tokens', 'gpt-6-luna') == ('output', 'global')
+    assert r.classify_meter('5.4 mini Batch Inp Gl 1M Tokens', 'gpt-5.4-mini') is None
+    assert r.classify_meter('GPT 5 Nano Inpt Glbl 1M Tokens', 'gpt-5') is None
+    assert r.classify_meter('6-luna LongCo Inp Std Gl 1M Tokens', 'gpt-6-luna') is None
+    print('contract ok: strict meter matching')
+    items = [{'meterName': 'Model Routers GL 1M Tokens', 'type': 'Consumption', 'retailPrice': 0.14, 'unitOfMeasure': '1M'},
+             {'meterName': 'X1 Inp Glbl Tokens', 'type': 'Consumption', 'retailPrice': 0.0001, 'unitOfMeasure': '1K'},
+             {'meterName': 'X1 Outp Glbl Tokens', 'type': 'Consumption', 'retailPrice': 0.0004, 'unitOfMeasure': '1K'}]
+    assert r.router_fee(items, 'global') == 0.14 and r.router_fee(items, 'datazone') is None
+    px = r.model_prices(items, 'x1', 'global')
+    assert px == {'input': 0.1, 'output': 0.4, 'cached': 0.1}, px
+    m, f = r.response_cost({'input_tokens': 1000000, 'cached_tokens': 500000, 'output_tokens': 0}, px, 0.14)
+    assert abs(m - 0.1) < 1e-9 and abs(f - 0.14) < 1e-9
+    m, f = r.response_cost({'input_tokens': 1000000, 'cached_tokens': 500000, 'output_tokens': 0}, px, 0.14, True)
+    assert abs(f - 0.07) < 1e-9
+    print('contract ok: router fee and cost')
+    arms = r.build_arms('auto', ['deployment', 'quality'], ['gpt-5.4-mini'])
+    assert [a['name'] for a in arms] == ['router:auto:deployment', 'router:auto:quality', 'fixed:gpt-5.4-mini']
+    import os
+    cases = r.load_cases(os.path.join(os.environ['PIN_VALIDATION_REPO_ROOT'], 'skills/token-economics/references/router_cases.jsonl'))
+    assert len(cases) >= 8 and {c['tier'] for c in cases} == {'easy', 'hard'}
+    print('contract ok: arms and cases')
     "
   expected_output:
     - "import ok: measure_tool_search"
@@ -120,12 +178,31 @@ validation:
     - "contract ok: endpoint normalization"
     - "contract ok: input-equivalent cost"
     - "contract ok: cache-write cost"
+    - "import ok: measure_router"
+    - "contract ok: strict meter matching"
+    - "contract ok: router fee and cost"
+    - "contract ok: arms and cases"
 
-last_validated: 2026-10-14
+last_validated: 2026-11-20
 validated_by: ricchi
 ---
 
 ## Audit trail
+
+### 2026-11-20 — Model router economics (v1.2.0)
+
+- Temporary AIServices account in an owner-controlled internal subscription,
+  Sweden Central: `model-router` 2025-11-18 GlobalStandard plus gpt-5.6-luna,
+  gpt-5.4-mini and gpt-5-nano GlobalStandard; Auto on the same resource.
+  `references/python/measure_router.py` (openai 3.56.0, azure-identity 1.27.0)
+  ran 12 cases x 2 repeats across router modes and baselines; results in
+  SKILL.md § Model router economics. gpt-6-luna had no quota.
+- Router fee read from the Retail Prices API: `Model Routers GL 1M Tokens`
+  0.14 USD and `Model Routers DZ 1M Tokens` 0.154 USD (effective 2026-01-01).
+- Regression: measure_tool_search.py on gpt-5.4-mini with openai 3.56.0:
+  input -65.3%, deferred variant called get_shipping_record (exit 0).
+- Pins refreshed openai 3.26.0 -> 3.56.0 and azure-identity 1.26.0 -> 1.27.0.
+- Router deployment and account deleted after the run and absence verified.
 
 ### 2026-10-14 — Current model families (v1.1.0)
 

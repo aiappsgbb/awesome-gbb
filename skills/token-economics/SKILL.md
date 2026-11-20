@@ -1,21 +1,21 @@
 ---
 name: token-economics
 description: >
-  Reduce cost per successful task, TPM pressure and context size for Responses API
-  apps and agents. Ordered ladder: prompt/tool-output diet, deferred tool loading with
-  tool_search + defer_loading (gpt-5.4+), cache-friendly prefixes, allowed_tools,
-  reasoning effort/verbosity/max_output_tokens, compaction, model right-sizing,
-  Flex/Batch/Priority. Live-measured script compares eager vs deferred cost, latency
-  and tool selection; shows when deferral loses to a warm cache. USE FOR: token
+  Cut cost per successful task, TPM pressure and context size for Responses API
+  apps and agents: prompt/tool-output diet, deferred tool loading (tool_search +
+  defer_loading, gpt-5.4+), cache-friendly prefixes, allowed_tools, reasoning effort,
+  compaction, right-sizing, model router economics, Flex/Batch/Priority. Live-measured
+  scripts price eager vs deferred tools and router modes vs fixed models. USE FOR: token
   economics, token optimization, reduce token usage, LLM cost,
   tool_search, defer_loading, deferred tools, tool namespaces, too many tools, large
   MCP catalog, prompt caching hit rate, cached_tokens, TPM 429 from large prompts,
-  reasoning effort cost, context compaction, flex processing. DO NOT
+  reasoning effort cost, context compaction, flex processing, model router cost,
+  routing fee, model auto savings. DO NOT
   USE FOR: PAYG-vs-PTU sizing (use paygo-ptu-cost-analyzer), Foundry spend
   dashboards/budgets (use foundry-cost-monitoring), Foundry Toolbox tool search (use
   foundry-toolbox), hosted-agent cache breakpoints (use foundry-hosted-agents).
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Token economics
@@ -74,7 +74,7 @@ raw `input_tokens` alone.
 | 3 | **Cache-friendly prefix**: stable instructions/tools first, variable content last, append-only history | Up to ~all of the stable prefix billed at the cached rate | ≥1,024 identical leading tokens; one-character change = miss |
 | 4 | **Reasoning effort, verbosity, `max_output_tokens`** | Cuts `O` (the expensive side) | Lower effort can reduce success; oversized `max_output_tokens` wastes TPM |
 | 5 | **Compaction** of long conversations/agent loops | Bounds `U` growth over long sessions | Opaque item; do not prune when chaining with `previous_response_id` |
-| 6 | **Right-size the model** (`-mini`/`-nano` for routing, extraction, classification) | Large rate difference | Validate with evals, not anecdotes (`foundry-evals`) |
+| 6 | **Right-size the model** (`-mini`/`-nano` for routing, extraction, classification), or let **model router** pick per request | Large rate difference | Validate with evals, not anecdotes (`foundry-evals`); the router adds a fee per input token (see [Model router economics](#model-router-economics)) |
 | 7 | **Service tier**: Flex (−50%, preview), Batch (−50%, ≤24h), Priority (premium, steadier latency), PTU | Multiplier on everything | Flex can 429 with no Standard fallback; PTU sizing is `paygo-ptu-cost-analyzer` |
 
 ## Deferred tool loading: `tool_search` + `defer_loading`
@@ -291,6 +291,148 @@ python references/python/measure_tool_search.py \
   400 (`This model is not supported by Responses API`) for gpt-5.4, gpt-5.4-mini
   and gpt-5-mini — measure with real `usage`.
 
+## Model router economics
+
+Sources: [model router][router], [how it chooses capacity][router-how],
+[per-request controls][router-controls], [monitoring][router-monitor],
+[AI Gateway][router-gateway], [Retail Prices API][retail-api]. Labels:
+**[Documented]** = official docs, **[Tested]** = measured live, **[Analysis]** = derived.
+
+### What you pay
+
+- **[Documented]** A routing fee per 1M **input** tokens plus the selected model's
+  usage at that model's rates. It applies to Auto (`model: "auto"`), to model router
+  deployments and to requests your own deployments serve: your own pay-as-you-go
+  deployment → its usage + fee; your own PTU deployment of an OpenAI model → fee only.
+  AI Gateway automatic model selection has **no** router fee while it is in preview
+  (gateway charges apply).
+- **[Tested]** Retail Prices API, Sweden Central, effective 2026-01-01 (read 2026-11-20):
+  meter `Model Routers GL 1M Tokens` **$0.14** (Global) and `Model Routers DZ 1M Tokens`
+  **$0.154** (Data Zone). Fetch it, do not hardcode it.
+- **Not documented:** whether cached input tokens are exempt from the fee. The script
+  charges all input by default; `--fee-excludes-cached` shows the other case. Settle
+  it with billed meters in Cost Management (filter tag **Deployment**).
+
+### The fee against the model it picks
+
+**[Analysis]** Fee as a share of each model's Global Standard input price
+(Retail Prices API, Sweden Central, 2026-11-20):
+
+| Model | Input $/1M | Fee vs input | Fee vs cached input |
+|---|---|---|---|
+| gpt-5-nano | 0.05 | 280% | 2,800% |
+| gpt-6-luna | 0.10 | 140% | 1,400% |
+| gpt-5.6-luna | 0.20 | 70% | 700% |
+| gpt-5-mini | 0.25 | 56% | 560% |
+| gpt-5.4-mini | 0.75 | 19% | 187% |
+| gpt-6.1-sol | 2.00 | 7% | 140% |
+| gpt-5.4 | 2.50 | 5.6% | 56% |
+| gpt-6-astra | 10.00 | 1.4% | 14% |
+
+On a modern small model the fee costs more than the input it routes; on a frontier
+model it is noise. Routing pays only when it moves traffic **away from an expensive
+baseline**, not when the alternative is already a cheap modern model:
+
+```
+router wins  ⇔  Σ_requests [cost(baseline) − cost(chosen)]  >  f · Σ input tokens
+f = routing fee per token        (and quality must hold on your evals)
+```
+
+Price per token is not price per task: reasoning models spend hidden output tokens.
+
+### Measured evidence (2026-11-20, Sweden Central, Global Standard)
+
+**[Tested]** `model-router` version `2025-11-18` (full pool, Balanced) and Auto, Responses
+API, Entra ID; 12 graded cases (8 easy: Q&A, extraction, a small RAG policy, JSON;
+4 hard: arithmetic word problem, policy reasoning, code output, logic) × 2 repeats,
+deterministic regex graders. gpt-5.6-luna, gpt-5.4-mini and gpt-5-nano were also
+deployed in the same resource, so the router could serve them from those deployments.
+gpt-6-luna could not be deployed as a baseline (no quota). Costs are estimates (usage ×
+list price + fee), not billed amounts; DeepSeek and Grok prices were mapped by hand
+(`--price-file`). One small run: treat differences under ~20% as noise.
+
+| Arm | Passed | $ per 1k tasks | Fee share | Top answering models |
+|---|---|---|---|---|
+| Fixed gpt-5.6-luna | 23/24 | **0.040** | — | gpt-5.6-luna |
+| Router, Cost mode | 24/24 | 0.044 | 27% | gpt-6-luna 42%, grok-4-1-fast-reasoning 25% |
+| Router, deployment (Balanced) | 23/24 | 0.050 | 17% | gpt-5.6-luna 58%, deepseek-v4.1-flash 25% |
+| Auto (Balanced) | 24/24 | 0.051 | 17% | same mix as the deployment |
+| Fixed gpt-5.4-mini | 21/24 | 0.064 | — | gpt-5.4-mini (missed 3 hard) |
+| Fixed gpt-5-nano | 24/24 | 0.121 | — | gpt-5-nano (reasoning output) |
+| Router, Quality mode | 24/24 | 0.390 | 1.7% | gpt-5.4 42%, gpt-5.6-sol 17% |
+
+What the numbers say:
+
+- Against a **modern small model** that already passes, the router was not cheaper:
+  Cost, Balanced and Auto cost 10–28% more than fixed gpt-5.6-luna, and the fee was
+  17–27% of their spend. Against gpt-5.4-mini or gpt-5-nano they were cheaper and as
+  accurate. The baseline you compare with decides the verdict.
+- **Quality** mode cost about 8× Balanced on this mix for one more passed case in 24.
+- Request parameters change the choice **[Tested]**: on the same hard prompt,
+  `reasoning.effort` `minimal` → DeepSeek-V3.2, `low`/`high` →
+  grok-4-1-fast-reasoning, `xhigh` → gpt-6-luna; `temperature` with
+  `routing_config.require_parameters: true` → gpt-4.1-nano. Treat effort as a routing
+  lever, and pin parameters only when they matter.
+
+### Decide
+
+| Situation | Choose |
+|---|---|
+| One modern small model passes your evals on almost all traffic | Call it directly: no fee |
+| Mixed difficulty and today's baseline is a frontier model | Router deployment, Balanced or Cost; measure against that baseline |
+| A few critical steps need the best model | Cheap default; per-request `routing_config.mode: "quality"` only on those steps |
+| Traffic already goes through AI Gateway | Automatic model selection (no router fee in preview) |
+| You own PTU of pool models in the same resource | Router serves from your PTU first; you pay the fee only |
+| Data must stay in the data zone | Data Zone Standard router deployment (fee 10% higher) |
+
+Rules that keep it honest:
+
+1. **Use a curated subset of at least two modern models** (`properties.routing.models`).
+   Failover stays inside the subset; a single-model subset still pays the fee
+   **[Documented]**. New models are not added to a subset automatically.
+2. **Your deployments of subset models serve routed traffic first** (exact name and
+   version, same resource) **[Documented]**: PTU, then pay-as-you-go, then router-managed
+   capacity. Their quota and rate limits apply.
+3. **Send a `session_id`** for conversations (`routing_config.session_affinity`, or
+   the `x-ms-session-id` header) so turns stay on a model with a warm cache. Every
+   `routing_config` field needs the `Foundry-Features: ModelRouterControls=V1Preview`
+   header; without it the router ignores them silently.
+4. **If ≥90% of traffic lands on one model, call that model directly** — you are paying
+   its price plus the fee. The script prints this advice.
+5. **Compare with single-model baselines** on the deployment's **Monitor** tab
+   (estimates) and with Cost Management (billed). Entra callers need **Foundry User**.
+
+### Measure the router on your workload
+
+> **MUST:** Copy verbatim from [`references/python/measure_router.py`](references/python/measure_router.py).
+> Do NOT redefine inline. It runs graded cases through router arms and fixed baselines,
+> prices them from the Retail Prices API and prints counts only.
+
+```bash
+pip install "openai>=3.26,<4" "azure-identity>=1.25,<2"
+python references/python/measure_router.py \
+  --endpoint https://<resource>.services.ai.azure.com \
+  --router <model-router-deployment|auto> --modes deployment,cost,quality \
+  --baseline <small-model-deployment> [--baseline <current-model-deployment>] \
+  --cases references/router_cases.jsonl --repeats 2 \
+  --region <region> [--zone datazone] [--price-file prices.json] [--fee-excludes-cached]
+python references/python/measure_router.py --prices-only --models gpt-5.4-mini,gpt-6-luna
+```
+
+- `--modes`: `deployment` sends no override (the deployment's mode, Balanced for
+  Auto); `balanced`/`cost`/`quality` add the preview header and `routing_config.mode`.
+- `--cases` (JSON Lines `{"id", "tier", "prompt", "expect", "reasoning_effort"?}`):
+  `expect` is a regex on the answer. Replace the demo [cases](references/router_cases.jsonl)
+  with your own prompts and graders.
+- Output per arm: quality (overall and by tier), `usd_per_1k_tasks`, `fee_share_pct`,
+  answering-model distribution, and the fee-vs-price table for every answering model.
+- Prices come from `https://prices.azure.com/api/retail/prices` with a finite timeout.
+  Meters are matched strictly (standard tier only); models without an unambiguous meter
+  (often non-OpenAI pool models) are reported as `unpriced_models` and exit `1` — supply
+  `--price-file` (`{"<model>": {"input", "cached", "output"}}` in USD per 1M).
+- Exit `0` = all arms ran and were priced, `1` = some answering model unpriced (cost is
+  a lower bound), `2` = configuration, price lookup or API error.
+
 ## Other levers (concise)
 
 **Prompt cache.** Stable content first, dynamic content last, append-only history,
@@ -356,6 +498,8 @@ See [Flex processing][flex]. PTU vs PAYG economics: `paygo-ptu-cost-analyzer`.
 - Injecting timestamps, request IDs or per-user data at the top of instructions.
 - Dumping full API payloads as tool outputs; they are re-sent on every later turn.
 - Setting `max_output_tokens` to the model maximum "just in case".
+- Adopting model router (or `model: "auto"`) for savings without measuring it against
+  the modern small model you would otherwise call; the fee can exceed its input price.
 - Logging prompts or tool payloads to diagnose cost.
 
 [pricing]: https://azure.microsoft.com/pricing/details/cognitive-services/openai-service/
@@ -367,3 +511,9 @@ See [Flex processing][flex]. PTU vs PAYG economics: `paygo-ptu-cost-analyzer`.
 [reasoning]: https://learn.microsoft.com/azure/foundry/openai/how-to/reasoning
 [compact]: https://learn.microsoft.com/azure/foundry/openai/how-to/responses#compact-a-response
 [flex]: https://learn.microsoft.com/azure/foundry/openai/how-to/flex-processing
+[router]: https://learn.microsoft.com/azure/foundry/openai/concepts/model-router
+[router-how]: https://learn.microsoft.com/azure/foundry/openai/concepts/model-router-how-it-works
+[router-controls]: https://learn.microsoft.com/azure/foundry/openai/how-to/model-router-routing-controls
+[router-monitor]: https://learn.microsoft.com/azure/foundry/openai/how-to/monitor-model-router
+[router-gateway]: https://learn.microsoft.com/azure/foundry/openai/how-to/model-router-ai-gateway
+[retail-api]: https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices
