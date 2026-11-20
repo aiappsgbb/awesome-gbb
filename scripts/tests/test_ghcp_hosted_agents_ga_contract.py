@@ -1002,8 +1002,10 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
 
     def test_fixture_proves_tool_resume_and_deny_turns(self) -> None:
         for token in (
-            "TURN1_OK state=created",
+            "TURN1_OK state=(created|resumed)",
             "TURN2_OK state=resumed tools=-",
+            '--session-id "$session_id"',
+            "turn ran in a different Foundry session than turn 1",
             "TURN3_OK state=resumed",
             "/tmp/ghcp-hosted-agents-validate-turn.py",
             '"denied"',

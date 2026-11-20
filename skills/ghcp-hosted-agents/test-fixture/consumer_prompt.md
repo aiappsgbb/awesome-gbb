@@ -32,7 +32,8 @@ rm -f \
   /tmp/ghcp-hosted-agents-smoke-result \
   /tmp/ghcp-hosted-agents-smoke-evidence \
   /tmp/ghcp-hosted-agents-agent-name \
-  /tmp/ghcp-hosted-agents-invoke.log
+  /tmp/ghcp-hosted-agents-invoke.log \
+  /tmp/ghcp-hosted-agents-session-id
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
 echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
@@ -724,19 +725,25 @@ under an attempt-specific filename before any retry and uploads both attempts.
 The canonical `container.py` runs `CopilotClient(mode="empty")`, opens the SDK
 session keyed by `FOUNDRY_AGENT_SESSION_ID`, emits one `host.session` SSE frame
 (`state` = `created` or `resumed`), and disconnects the session after every
-turn. `azd ai agent invoke` reuses the same Foundry session for consecutive
-invokes, so turns 2 and 3 resume the SDK session from its journal in `$HOME`
-with providers, tools and hooks re-supplied. Write this validator once:
+turn. Turns 2 and 3 pass the Foundry session id returned by turn 1
+(`x-agent-session-id` header) with `--session-id`, so they resume the SDK
+session from its journal in `$HOME` with providers, tools and hooks
+re-supplied. Write this validator once:
 
 ```bash
 cat > /tmp/ghcp-hosted-agents-validate-turn.py <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
 turn, log_path = sys.argv[1], sys.argv[2]
+session_file = Path("/tmp/ghcp-hosted-agents-session-id")
+raw = Path(log_path).read_text(encoding="utf-8", errors="replace")
+match = re.search(r"^x-agent-session-id:\s*(\S+)\s*$", raw, re.IGNORECASE | re.MULTILINE)
+session_id = match.group(1) if match else None
 events = []
-for line in Path(log_path).read_text(encoding="utf-8", errors="replace").splitlines():
+for line in raw.splitlines():
     if line.startswith("data:"):
         try:
             event = json.loads(line[5:].strip())
@@ -767,9 +774,13 @@ def fail(reason):
 
 if errors:
     fail("terminal error event")
+if not session_id:
+    fail("missing x-agent-session-id response header")
 if turn == "1":
-    if state != "created":
-        fail("expected host.session state=created")
+    # A readiness retry in Step 4 reuses the same Foundry session, so turn 1
+    # may already be a resume; turns 2 and 3 must be.
+    if state not in {"created", "resumed"}:
+        fail("expected host.session frame")
     if "get_order" not in called:
         fail("get_order tool was not called")
     if "ZX-4471" not in text:
@@ -794,6 +805,10 @@ elif turn == "3":
         fail("issue_refund was not attempted and denied by the preToolUse hook")
 else:
     fail("unknown turn")
+if turn == "1":
+    session_file.write_text(session_id, encoding="utf-8")
+elif session_id != session_file.read_text(encoding="utf-8").strip():
+    fail("turn ran in a different Foundry session than turn 1")
 print(f"TURN{turn}_OK state={state} tools={','.join(called) or '-'}")
 PY
 ```
@@ -812,8 +827,10 @@ python3 /tmp/ghcp-hosted-agents-validate-turn.py 1 /tmp/ghcp-hosted-agents-invok
     > /tmp/ghcp-hosted-agents-smoke-result
   exit 1
 }
+session_id="$(cat /tmp/ghcp-hosted-agents-session-id)"
 timeout 300 azd ai agent invoke "$agent_name" \
   '{"input":"Without calling any tools, repeat the tracking code you gave me earlier. Reply with only the code."}' \
+  --session-id "$session_id" \
   --protocol invocations --output raw --timeout 180 \
   >/tmp/ghcp-hosted-agents-invoke-turn2.log 2>&1
 python3 /tmp/ghcp-hosted-agents-validate-turn.py 2 /tmp/ghcp-hosted-agents-invoke-turn2.log \
@@ -824,6 +841,7 @@ python3 /tmp/ghcp-hosted-agents-validate-turn.py 2 /tmp/ghcp-hosted-agents-invok
 }
 timeout 300 azd ai agent invoke "$agent_name" \
   '{"input":"Call the issue_refund tool now for order A1234."}' \
+  --session-id "$session_id" \
   --protocol invocations --output raw --timeout 180 \
   >/tmp/ghcp-hosted-agents-invoke-turn3.log 2>&1
 python3 /tmp/ghcp-hosted-agents-validate-turn.py 3 /tmp/ghcp-hosted-agents-invoke-turn3.log \
@@ -835,7 +853,10 @@ python3 /tmp/ghcp-hosted-agents-validate-turn.py 3 /tmp/ghcp-hosted-agents-invok
 tail -n 3 /tmp/ghcp-hosted-agents-smoke-evidence
 ```
 
-Do not change the prompts, add tools, or retry a failed turn.
+Run this block once, exactly as written. Do not change the prompts, add
+tools, retry a failed turn, override `FOUNDRY_AGENT_SESSION_ID`, or start a
+new deployment. If a turn check fails, the block has already written the FAIL
+marker: go straight to Step 5 teardown and stop.
 
 ## Step 5 - best-effort teardown
 
@@ -902,7 +923,7 @@ required_patterns = (
     r"ROLE_ASSIGNED scope=account owned=[01]",
     r"ROLE_ASSIGNED scope=project owned=[01]",
     r"INVOKE_OK name=ci-smoke-ghcp-[0-9a-f]{8} attempt=[1-6]",
-    r"TURN1_OK state=created tools=.*get_order.*",
+    r"TURN1_OK state=(created|resumed) tools=.*get_order.*",
     r"TURN2_OK state=resumed tools=-",
     r"TURN3_OK state=resumed tools=.*issue_refund.*",
 )

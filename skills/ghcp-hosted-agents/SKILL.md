@@ -475,6 +475,10 @@ azd ai agent invoke "<agent-name>" '{"input": "Say hello in one short sentence."
   `assistant.message_delta`
 - `--timeout <seconds>` (or `-t`) bounds the request; the CLI default is
   1800s, which is far longer than most smoke/CI budgets need
+- Multi-turn: the response's `x-agent-session-id` header names the Foundry
+  session. Pass it back with `--session-id <id>` so later turns land in the same
+  sandbox and the SDK resumes its journal (`--new-session` forces a fresh one).
+  In CI, relying on the CLI's cached session put turn 2 in a different session.
 
 Immediately after a new version becomes `active`, the first model call can
 briefly return an HTTP-200 SSE readiness envelope while the platform's
