@@ -38,7 +38,7 @@ marker (Step 2) with reason `auth context missing: <var-name>` and stop.
 
 Prove both documented Responses evaluation paths with **one disposable prompt
 agent and two invocations total**. Install the pin's bounded runtime set:
-`azure-ai-projects~=2.6.0`, `azure-identity~=1.25.3`, `openai~=3.8.0`.
+`azure-ai-projects~=2.11.0`, `azure-identity~=1.27.0`, `openai~=3.56.0`.
 Do not upgrade unrelated tools. The pre-granted caller/project identity roles
 are prerequisites; do not re-grant them or repair shared infrastructure.
 
