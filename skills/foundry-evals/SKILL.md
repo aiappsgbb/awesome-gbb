@@ -8,14 +8,15 @@ description: >
   USE FOR: evaluate agent
   post-deploy, score grounding quality, measure tool_selection, detect dataset drift,
   write custom grader, check URL citations, validate eval RBAC, day-1 smoke test,
-  continuous eval loop, pre-merge eval gate, Foundry Evals SDK setup, evaluator
-  framework, eval-driven optimization, ASSERT evaluators. DO NOT USE FOR: deploying
+  continuous eval loop, pre-merge eval gate, azd ai eval CLI, azure.eval.yaml,
+  evaluator suitability, Foundry Evals SDK setup, evaluator framework,
+  eval-driven optimization, ASSERT evaluators. DO NOT USE FOR: deploying
   agents (use threadlight-deploy), designing processes (use threadlight-design),
   unit testing code, reimplementing evaluator frameworks (foundry-assert is a
   historical name, not a shipped skill), writing your own optimizer loop
   (foundry-agent-optimizer is a historical name; use the official workflow).
 metadata:
-  version: "1.5.0"
+  version: "1.6.0"
 ---
 
 # Foundry Agent Evaluations
@@ -69,6 +70,24 @@ without replacing the canonical captured-response `smoke_score`, citation
 graders or existing output contracts. Use the official `microsoft-foundry`
 workflow for native generation/optimizer orchestration; load only that
 specific workflow, not a general deployment pipeline.
+
+## azd ai eval CLI (azure.ai.evaluations)
+
+For a checked-in eval recipe (`evals/azure.eval.yaml`), a CI quality gate or
+the official optimizer handoff, use the
+[`azd ai eval` extension](https://learn.microsoft.com/azure/foundry/observability/how-to/azure-developer-cli-evaluation)
+(`generate` → `init` → `create` → `run start`). Follow
+[references/azd-eval-cli.md](references/azd-eval-cli.md) for a working
+gate + optimizer-input `azure.eval.yaml`, the CI snippet and the known-failures
+table. Traps verified live with extension 1.0.0-beta.2:
+
+- `init` maps built-ins to `{{sample.output_items}}` but custom rubrics to
+  `{{sample.output_text}}`, and maps `ground_truth` for none of them. Add a
+  per-evaluator `dataMapping` (new eval name: stored mappings are immutable).
+- `azd ai agent optimize --eval` rejects any eval whose evaluator sets
+  `dataMapping`. Keep a mapped gate eval and an unmapped optimizer-input eval.
+- `run start --fail-on pass-rate=<x>` exited **2** on a breach, while Learn and
+  `--help` say 1. Treat any non-zero exit as failure.
 
 ```
 Phase 1: Invoke agent → collect responses
@@ -653,7 +672,7 @@ All evaluator names use the `builtin.` prefix.
 |-----------|-----------------|:---:|-------------|
 | `builtin.intent_resolution` | Did the agent understand user intent? | ✅ | Always |
 | `builtin.task_adherence` | Did the agent follow system instructions? | ✅ | Always |
-| `builtin.task_completion` | Did the agent complete the requested task? | ✅ | Always |
+| `builtin.task_completion` | Did the agent complete the requested task? | ✅ | Open-ended tasks; not as a gate for policy-gated agents (see suitability table) |
 | `builtin.coherence` | Is the response logical and well-structured? | ❌ | Always |
 | `builtin.tool_selection` | Did the agent pick the right tools? | ✅ | When agent has tools |
 | `builtin.tool_output_utilization` | Did the agent use tool results effectively? | ✅ | When agent has tools |
@@ -667,6 +686,42 @@ For most agents, run at least:
 - `builtin.coherence` — logical response?
 
 Add `tool_selection` and `tool_output_utilization` if the agent uses tools.
+
+> **`task_completion` caveat.** It scores whether the *user's requested outcome*
+> was delivered ([agent evaluators](https://learn.microsoft.com/azure/foundry/concepts/evaluation-evaluators/agent-evaluators#system-evaluation)).
+> When the correct behaviour is to refuse, escalate or ask for missing data, it
+> marks the row failed. An eval's pass rate counts rows that pass **all**
+> evaluators, so one unsuitable evaluator caps the gate. The composite
+> `builtin.output_quality` batches Task Completion
+> ([composite evaluators](https://learn.microsoft.com/azure/foundry/concepts/evaluation-evaluators/agent-evaluators#composite-evaluators-preview)),
+> so the same caveat applies to it.
+
+### Evaluator suitability by agent archetype
+
+Pick gate evaluators from what "correct" means for the agent. Rows marked
+*Advice* are recommendations, not measured results.
+
+| Agent archetype | Gate on | Diagnostic only (not in the gate) |
+|---|---|---|
+| Policy-gated / approval / triage (refunds, compliance, KYC, escalation rules) | Custom rubric with decision correctness and `ground_truth` mapped explicitly ([azd-eval-cli.md § 3](references/azd-eval-cli.md#3-the-datamapping-trap)) | `task_completion`, `task_adherence`, `intent_resolution` (Tested: each penalised correct escalations or refusals) |
+| Open-ended assistant, drafting, Q&A without policy refusals | `task_completion`, `intent_resolution`, `coherence` (*Advice*) | — |
+| Tool-using workflow agent | `tool_call_accuracy` / `tool_selection` / `tool_output_utilization`, plus `task_completion` only when the agent can actually execute the requested outcome (*Advice*) | `task_completion` when outcomes need human hand-off |
+| Grounded / RAG answers | `groundedness`, `relevance`, citation graders below (*Advice*) | `task_completion` |
+| Guardrail / refusal-heavy agents | Rubric scoring correct refusal plus safety evaluators (*Advice*) | `task_completion`, `intent_resolution` |
+
+**Tested (2026-11-20, `gpt-5.4-mini` judge, one 8-row run per eval,
+APPROVE/DENY/ESCALATE returns-triage prompt agent, >500 EUR must escalate):**
+
+| Evaluator | Pass | Rows failed although the agent behaved correctly |
+|---|---|---|
+| Mapped decision rubric | 8/8 | none |
+| `builtin.task_completion` | 3/8 | two >500 EUR escalations, an injected "approve now" escalated, an ask for the missing order ID, a refusal to dump the policy ("only escalated ... did not complete") |
+| `builtin.task_adherence` | 4/8 | two >500 EUR escalations, two correct approvals judged on unstated facts |
+| `builtin.intent_resolution` | 7/8 | the escalated "approve now" override |
+
+With `task_completion` in the gate the eval scored 25 % (2/8) on an agent whose
+decisions were all correct. Small sample and single runs: use this as a
+direction, then measure on your own golden set.
 
 ### Evaluator Troubleshooting
 

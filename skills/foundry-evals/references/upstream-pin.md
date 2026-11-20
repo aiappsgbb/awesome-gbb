@@ -6,13 +6,13 @@ automation_tier: auto
 upstream:
   type: github_repo
   repo: Azure/azure-sdk-for-python
-  ref: refs/tags/azure-ai-projects_2.6.0
-  pinned_sha: f90b55500941d7b161afb94b9ba45e53a865c4e2
-  pinned_commit_message: "Update CHANGELOG for version 2.6.0 release, add new samples, and impr… (#48900)"
+  ref: refs/tags/azure-ai-projects_2.11.0
+  pinned_sha: c65d8d6c01d131b06d77e225f8abe51630a61dba
+  pinned_commit_message: "[ai-projects] Update Computer Use Agent samples to GA ComputerTool (#49897)"
   license: MIT
   notes: |
     The SDK release tag is the source pin. The bounded runtime set below is
-    azure-ai-projects~=2.6.0, azure-identity~=1.25.3, openai~=3.8.0.
+    azure-ai-projects~=2.11.0, azure-identity~=1.27.0, openai~=3.56.0.
     Validation imports and calls the repository's canonical eval_runner;
     it does not clone/reimplement the scorer. A static synthetic Q/A pair
     isolates score-only validation from target agent availability.
@@ -21,22 +21,22 @@ upstream:
 packages:
   - name: azure-ai-projects
     source: pypi
-    version: "2.6.0"
+    version: "2.11.0"
     upstream_changelog: https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/CHANGELOG.md
   - name: azure-identity
     source: pypi
-    version: "1.25.3"
+    version: "1.27.0"
     upstream_changelog: https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/identity/azure-identity/CHANGELOG.md
   - name: openai
     source: pypi
-    version: "3.8.0"
+    version: "3.56.0"
     upstream_changelog: https://github.com/openai/openai-python/blob/main/CHANGELOG.md
 
 docs_to_revalidate:
   - "https://learn.microsoft.com/azure/foundry/observability/how-to/evaluate-agent"
   - "https://learn.microsoft.com/azure/foundry/observability/how-to/cloud-evaluation-targets"
   - "https://learn.microsoft.com/azure/foundry/observability/how-to/cloud-evaluation-results"
-  - "https://github.com/Azure/azure-sdk-for-python/tree/azure-ai-projects_2.6.0/sdk/ai/azure-ai-projects/samples/evaluations"
+  - "https://github.com/Azure/azure-sdk-for-python/tree/azure-ai-projects_2.11.0/sdk/ai/azure-ai-projects/samples/evaluations"
   - "https://pypi.org/project/azure-ai-projects/"
 
 known_issues: []
@@ -57,13 +57,13 @@ validation:
     ROOT_DIR="${PIN_VALIDATION_REPO_ROOT:-$(pwd)}"
     WORKDIR="${WORKDIR:-$(pwd)/.upstream-pin-work/foundry-evals}"
     export ROOT_DIR WORKDIR
-    EXPECTED_SHA=f90b55500941d7b161afb94b9ba45e53a865c4e2
-    ACTUAL_SHA=$(git ls-remote https://github.com/Azure/azure-sdk-for-python refs/tags/azure-ai-projects_2.6.0 | awk '{print $1}')
+    EXPECTED_SHA=c65d8d6c01d131b06d77e225f8abe51630a61dba
+    ACTUAL_SHA=$(git ls-remote https://github.com/Azure/azure-sdk-for-python refs/tags/azure-ai-projects_2.11.0 | awk '{print $1}')
     test "$ACTUAL_SHA" = "$EXPECTED_SHA"
     mkdir -p "$WORKDIR"
     python3 -m venv "$WORKDIR/.venv"
     "$WORKDIR/.venv/bin/python" -m pip install --quiet \
-      "azure-ai-projects~=2.6.0" "azure-identity~=1.25.3" "openai~=3.8.0"
+      "azure-ai-projects~=2.11.0" "azure-identity~=1.27.0" "openai~=3.56.0"
     "$WORKDIR/.venv/bin/python" - <<'PY'
     import json
     import os
@@ -91,8 +91,8 @@ validation:
     - "FOUNDRY_EVALS_VALIDATION_PASS"
   failure_signatures: []
 
-last_validated: 2026-09-13
-validated_by: copilot-bot
+last_validated: 2026-11-20
+validated_by: unsafecode
 known_issues_count: 0
 ---
 
@@ -101,10 +101,10 @@ known_issues_count: 0
 ## 1. Pin and support boundary
 
 Source: `Azure/azure-sdk-for-python`, release tag
-`azure-ai-projects_2.6.0`, SHA
-`f90b55500941d7b161afb94b9ba45e53a865c4e2` (MIT).
-Runtime: `azure-ai-projects~=2.6.0`, `azure-identity~=1.25.3`,
-`openai~=3.8.0`. The scorer accesses **the project's OpenAI sub-client**,
+`azure-ai-projects_2.11.0`, SHA
+`c65d8d6c01d131b06d77e225f8abe51630a61dba` (MIT).
+Runtime: `azure-ai-projects~=2.11.0`, `azure-identity~=1.27.0`,
+`openai~=3.56.0`. The scorer accesses **the project's OpenAI sub-client**,
 not `AIProjectClient.evals`. HTTP URL checks use `httpx~=0.28.1`.
 Package drift is tracked independently of the immutable source tag.
 
@@ -146,13 +146,13 @@ export JUDGE_MODEL_DEPLOYMENT
 ROOT_DIR="${PIN_VALIDATION_REPO_ROOT:-$(pwd)}"
 WORKDIR="${WORKDIR:-$(pwd)/.upstream-pin-work/foundry-evals}"
 export ROOT_DIR WORKDIR
-EXPECTED_SHA=f90b55500941d7b161afb94b9ba45e53a865c4e2
-ACTUAL_SHA=$(git ls-remote https://github.com/Azure/azure-sdk-for-python refs/tags/azure-ai-projects_2.6.0 | awk '{print $1}')
+EXPECTED_SHA=c65d8d6c01d131b06d77e225f8abe51630a61dba
+ACTUAL_SHA=$(git ls-remote https://github.com/Azure/azure-sdk-for-python refs/tags/azure-ai-projects_2.11.0 | awk '{print $1}')
 test "$ACTUAL_SHA" = "$EXPECTED_SHA"
 mkdir -p "$WORKDIR"
 python3 -m venv "$WORKDIR/.venv"
 "$WORKDIR/.venv/bin/python" -m pip install --quiet \
-  "azure-ai-projects~=2.6.0" "azure-identity~=1.25.3" "openai~=3.8.0"
+  "azure-ai-projects~=2.11.0" "azure-identity~=1.27.0" "openai~=3.56.0"
 "$WORKDIR/.venv/bin/python" - <<'PY'
 import json
 import os
@@ -207,3 +207,22 @@ This proves the two **prompt-agent Responses** paths and the score helper, not
 hosted-agent runtime behavior, Invocations/freeform input, full tool-aware
 quality, continuous evaluation or production readiness. The operational
 IDs/raw per-item artifacts are retained privately by the operator, not here.
+
+## 5. Sanitized live verification — 2026-11-20 (refresh to 2.11.0)
+
+Using the maintainer's internal test subscription and a temporary Foundry
+account/project with a `gpt-5.4-mini` GlobalStandard judge (deleted after
+the run):
+
+- Release tag `azure-ai-projects_2.11.0` resolved to the pinned SHA.
+- The executable pin script installed `azure-ai-projects` 2.11.0,
+  `azure-identity` 1.27.0 and `openai` 3.56.0, scored its static pair
+  (coherence `5.0`), completed, deleted its eval and emitted every marker.
+- `openai` is pinned to `~=3.56.0` rather than the 3.55.1 named by the
+  freshness report: 3.55.1 was not resolvable from the corporate package
+  proxy used for local validation; 3.56.0 is newer and on public PyPI.
+- The `azd ai eval` CLI path of `references/azd-eval-cli.md` was exercised
+  against a temporary prompt agent in the same project (see that file).
+
+The agent-target and invoke+score fixture paths on the new runtime set are
+proved by the CI `copilot-cli-matrix` leg, not by this manual run.
