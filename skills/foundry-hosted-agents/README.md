@@ -22,6 +22,11 @@ completion, business effect and client delivery, and forbids replay after an
 uncertain outcome. Compare actual adopted helper/template hashes with
 `references/python/hosted_contract.py`, not only skill version labels.
 
+[Long-running resilience](references/long-running-resilience.md) covers
+crash-recoverable background responses (`resilient_background`, checkpoints,
+`starting_after` reconnect) on the GA Agent Server 2.3/2.4 stack, with a local
+SIGKILL recovery test in `tests/`.
+
 ## Roadmap
 
 **Planned for v0.7.0 — thread-retention reader

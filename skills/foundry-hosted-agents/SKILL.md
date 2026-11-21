@@ -1,24 +1,24 @@
 ---
 name: foundry-hosted-agents
 description: >
-  Deploy + manage Foundry hosted agents — container deploy via unified
-  azure.yaml is GA; source-code --deploy-mode code is still preview. MAF
-  1.14 current, azd ext install microsoft.foundry, implicit agent access
-  (no default role grant). USE FOR: deploy foundry agent, hosted agent,
+  Deploy/manage Foundry hosted agents: container deploy via unified
+  azure.yaml is GA; source-code --deploy-mode code is preview. MAF 1.14
+  current, azd ext install microsoft.foundry. USE FOR: deploy foundry agent, hosted agent,
   container agent, azure.yaml, azd ai agent, microsoft.foundry, MAF,
   FoundryChatClient, ResponsesHostServer, ACR push, batch eval, agent
   identity, Foundry User role, entra-agent-id, Responses/Invocations
   protocols, Activity protocol, blue-green deploy, canary rollout,
   version rollback, traffic routing, version_selector, agent_endpoint,
-  update_details. DO NOT USE FOR: Harness runtime composition (use
-  agent-framework-harness), prompt agents (use foundry-prompt-agents),
-  ACA MCP (use foundry-mcp-aca), GHCP coding
+  update_details, long-running agent, crash recovery,
+  resilient_background, stream reconnect. DO NOT USE FOR: Harness
+  runtime (use agent-framework-harness), prompt agents (use
+  foundry-prompt-agents), ACA MCP (use foundry-mcp-aca), GHCP coding
   agent (use ghcp-hosted-agents), Citadel hub/spoke (use
   citadel-hub-deploy), pilot pipeline (use threadlight-deploy),
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "3.0.1"
+  version: "3.1.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -51,6 +51,8 @@ for that path in isolation. Covers the `Agent` + `FoundryChatClient` +
 - Understanding agent identity + when (rarely) explicit RBAC is needed
 - Authoring the unified `azure.yaml` (`azure.ai.project` + `azure.ai.agent` services)
 - Blue-green / canary / rollback traffic routing across agent versions
+- Long-running or crash-resilient turns (background responses, recovery,
+  stream reconnect) ([§ below](#long-running-and-crash-resilient-agents))
 - **Migrating from MAF 1.3.x → 1.4.0** ([§ below](#maf-140-breaking-changes-may-2026))
 - **Migrating from the legacy two-file `agent.yaml` + `agent.manifest.yaml`
   contract** — select and verify the versioned consumer before migration;
@@ -390,6 +392,8 @@ MAF 1.8.0 ships two `[BREAKING]` markers; neither affects hosted-agent code:
 
 1. **`agent-framework-github-copilot` sub-package internal rename** —
    this skill does not pin or import `agent-framework-github-copilot`. **N/A.**
+   Do not add it next to Copilot SDK 2.0 — see
+   [§ Do not mix](#do-not-mix-maf-copilot-adapters-with-copilot-sdk-20).
 2. **Experimental `Skill` abstract-class refactor in `agent-framework-core`** —
    this skill uses the high-level `SkillsProvider.from_paths(...)` facade
    (see § Skill Loading below), not the experimental `Skill` ABC.
@@ -1310,6 +1314,28 @@ stays GA. Do NOT use `"allow"` — it can pull an unpinned beta `azure-identity`
 No `override-dependencies` needed — the direct exact prerelease pins are compatible
 with the hosting package's declared bounds.
 
+### Do not mix MAF Copilot adapters with Copilot SDK 2.0
+
+MAF apps that use the GitHub Copilot provider stay on Copilot SDK 1.x until a
+compatible adapter ships. Do not install `agent-framework-github-copilot` (or
+the .NET `Microsoft.Agents.AI.GitHub.Copilot`) in the same container as
+`microsoft-copilot-sdk` 2.x.
+
+- **Documented**: `agent-framework-github-copilot` 2.2.0 requires
+  `github-copilot-sdk<2.0,>=1.0.16`
+  ([PyPI](https://pypi.org/project/agent-framework-github-copilot/)).
+- **Documented**: the Copilot SDK says the .NET and Python MAF adapters are not
+  yet compatible with V2, and that the Python distributions share the `copilot`
+  import and install overlapping files
+  ([microsoft/copilot-sdk: MAF integration](https://github.com/microsoft/copilot-sdk/blob/main/docs/integrations/microsoft-agent-framework.md)).
+- **Tested** (pin `validation.script`, public PyPI, CI): pip installs both
+  distributions without a resolver error and `pip check` stays clean, yet both
+  own `copilot/__init__.py`. The resolver does not protect you; whichever wheel
+  installs last wins.
+
+For Copilot SDK 2.0 hosted agents without MAF, use
+[`ghcp-hosted-agents`](../ghcp-hosted-agents/SKILL.md).
+
 ### Dockerfile
 
 > **MUST:** Copy verbatim from [`references/docker/Dockerfile`](references/docker/Dockerfile). Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the canonical, field-validated container image for a hosted agent (uv-based dependency sync, port 8088, remote-buildable via `azd deploy`).
@@ -1996,6 +2022,32 @@ unique build stamp.
   agent versions.
 
 ---
+
+## Long-running and crash-resilient agents
+
+**MUST:** follow [`references/long-running-resilience.md`](references/long-running-resilience.md)
+and copy the handler from
+[`references/python/resilience/resilient_agent.py`](references/python/resilience/resilient_agent.py).
+This path uses the Agent Server SDK directly (`azure-ai-agentserver-core==2.3.0`,
+`azure-ai-agentserver-responses==2.4.0`), not the MAF hosting profile above.
+
+- Crash recovery is opt-in: host `ResponsesServerOptions(resilient_background=True)`
+  and requests with `store=true` and `background=true`. Without the opt-in a
+  crashed background response can stay `in_progress` forever.
+- One output item per phase, `yield stream.checkpoint()` after each, and a
+  recovery branch seeded from `context.persisted_response`. Recovery re-enters
+  the handler from the top: fence non-idempotent effects with a watermark and an
+  idempotency key.
+- Clients send `stream=true` too, keep `response.id`, `agent_session_id` and the
+  last `sequence_number`, reconnect with `starting_after`, treat a later
+  `response.in_progress` as a snapshot reset, and poll `GET /responses/{id}` as
+  the source of truth. A stopped or idle session recovers only on its next request.
+- Several Learn Python snippets use names absent from these wheels
+  (`ResponseEventStream.from_snapshot`, `context.conversation_chain_metadata`,
+  `context.is_shutting_down`); the reference lists the replacements.
+
+The local crash test is `tests/test_resilient_recovery.py` (SIGKILL mid-phase,
+file-backed stores, no Azure).
 
 ## Operation recovery
 

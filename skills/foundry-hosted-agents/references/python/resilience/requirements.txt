@@ -1,0 +1,3 @@
+# Resilient Responses profile for ../../long-running-resilience.md (separate from the MAF profile).
+azure-ai-agentserver-core==2.3.0
+azure-ai-agentserver-responses==2.4.0
