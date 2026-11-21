@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Headless PAYGO vs PTU cost analysis report generator.
 
-Three input modes (mutually exclusive):
+Input modes (mutually exclusive):
 
   --csv <path>                          # CSV matching required schema
   --workspace <id> [--kql --time-range  # Log Analytics workspace
                     --deployment]
   --synthetic [--days N]                # Self-generated demo data
+  --router-metrics <json>               # Router-aware: saved Azure Monitor metrics
+  --router-resource <foundry-id>        # Router-aware: live Azure Monitor metrics
+
+Router-aware modes size PTU for `--model` as the SERVED model across every
+deployment (router-managed + your own), add a "Router-aware load" section and
+a direct-only vs with-routed PTU what-if with the router fee.
 
 Outputs (under --out-dir):
   report.md, report.json,
@@ -19,6 +25,7 @@ Required CSV schema:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -26,12 +33,17 @@ from pathlib import Path
 THIS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(THIS_DIR))
 
+from datetime import datetime, timezone  # noqa: E402
+
 import pandas as pd  # noqa: E402
+
+import router_metrics  # noqa: E402
 
 from analyzer import (  # noqa: E402
     build_default_kql_query,
     generate_synthetic_data,
     load_kql_template,
+    REQUIRED_COLUMNS,
     load_models_config,
     normalize_usage_dataframe,
     query_log_analytics,
@@ -72,6 +84,54 @@ def _build_argparser() -> argparse.ArgumentParser:
     src.add_argument("--workspace", help="Log Analytics workspace ID (GUID).")
     src.add_argument(
         "--synthetic", action="store_true", help="Generate synthetic demo data."
+    )
+    src.add_argument(
+        "--router-metrics",
+        type=Path,
+        help="Azure Monitor metrics JSON (az monitor metrics list -o json or REST) split by "
+        "ModelDeploymentName x ModelName. Enables the router-aware analysis.",
+    )
+    src.add_argument(
+        "--router-resource",
+        help="Foundry resource ID: fetch router-aware metrics live (DefaultAzureCredential, "
+        "Monitoring Reader). Uses --time-range.",
+    )
+
+    # Router-aware options
+    p.add_argument(
+        "--router-deployment",
+        action="append",
+        default=[],
+        help="Extra router deployment name (repeatable). Routers seen in ModelRouter* "
+        "metrics or named model-router* are detected automatically.",
+    )
+    p.add_argument(
+        "--router-fee-per-m",
+        type=float,
+        default=None,
+        help="Router fee in USD per 1M input tokens. Default: Azure Retail Prices API "
+        "meter for --tier in --router-region.",
+    )
+    p.add_argument(
+        "--router-region",
+        default="swedencentral",
+        help="Region for the router fee lookup (default: swedencentral).",
+    )
+    p.add_argument(
+        "--fee-excludes-cached",
+        action="store_true",
+        help="Do not charge the router fee on cached input (not documented either way).",
+    )
+    p.add_argument(
+        "--watch-models",
+        default=",".join(router_metrics.DEFAULT_WATCH_MODELS),
+        help="Comma-separated served-model families to flag when routed traffic lands on them.",
+    )
+    p.add_argument(
+        "--save-metrics",
+        type=Path,
+        default=None,
+        help="With --router-resource, also save the fetched metrics JSON here.",
     )
 
     # KQL-mode options
@@ -168,6 +228,35 @@ def _resolve_pricing(models: dict, model_slug: str, tier: str) -> dict:
     }
 
 
+def _router_timespan(time_range: str) -> str:
+    from analyzer import time_range_to_timedelta
+
+    end = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    start = end - time_range_to_timedelta(time_range)
+    return f"{start:%Y-%m-%dT%H:%M:%SZ}/{end:%Y-%m-%dT%H:%M:%SZ}"
+
+
+def _load_router_rows(args: argparse.Namespace) -> tuple[list[dict], str]:
+    if args.router_metrics:
+        if not args.router_metrics.exists():
+            raise SystemExit(f"Metrics JSON not found: {args.router_metrics}")
+        payload = json.loads(args.router_metrics.read_text(encoding="utf-8"))
+        source = f"azure-monitor-metrics:{args.router_metrics}"
+    else:
+        timespan = _router_timespan(args.time_range)
+        payload = router_metrics.fetch_metrics(args.router_resource, timespan)
+        if args.save_metrics:
+            args.save_metrics.parent.mkdir(parents=True, exist_ok=True)
+            args.save_metrics.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        source = f"azure-monitor-metrics:{args.router_resource}@{timespan}"
+    return router_metrics.parse_metrics_payload(payload), source
+
+
+def _series_df(rows: list[dict], model: str, include_routed: bool, routers: list[str]) -> pd.DataFrame:
+    series = router_metrics.minute_series(rows, model, include_routed=include_routed, router_deployments=routers)
+    return normalize_usage_dataframe(pd.DataFrame(series, columns=list(REQUIRED_COLUMNS)))
+
+
 def _load_input(args: argparse.Namespace) -> tuple[pd.DataFrame, str]:
     if args.synthetic:
         df = generate_synthetic_data(duration_days=args.days)
@@ -185,20 +274,8 @@ def _load_input(args: argparse.Namespace) -> tuple[pd.DataFrame, str]:
     raise SystemExit("No input source supplied (need --csv, --workspace, or --synthetic).")
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _build_argparser().parse_args(argv)
-    models = load_models_config()
-    pricing = _resolve_pricing(models, args.model, args.tier)
-
-    df, source = _load_input(args)
-
-    ptu_output_weight = (
-        args.ptu_output_weight
-        if args.ptu_output_weight is not None
-        else pricing["ptu_output_weight"]
-    )
-
-    result = run_analysis(
+def _analyze(df: pd.DataFrame, args: argparse.Namespace, pricing: dict, ptu_output_weight: float) -> dict:
+    return run_analysis(
         df,
         percentiles=args.percentiles,
         ptu_output_weight=ptu_output_weight,
@@ -211,6 +288,75 @@ def main(argv: list[str] | None = None) -> int:
         effective_ptu_monthly_price=pricing["ptu_pricing"]["monthly_price"],
         effective_ptu_yearly_price=pricing["ptu_pricing"]["yearly_price"],
     )
+
+
+def _whatif_row(label: str, result: dict, percentile: int) -> dict:
+    s = result["ptu_scenarios"][percentile]
+    return {
+        "label": label,
+        "billable_tpm": float(result["ptu_percentile_values"][percentile]),
+        "ptus": float(s["ptus"]),
+        "paygo_monthly": float(result["paygo_monthly"]),
+        "total_monthly": float(s["total_monthly"]),
+    }
+
+
+def _router_analysis(args: argparse.Namespace, models: dict, pricing: dict, ptu_output_weight: float):
+    rows, source = _load_router_rows(args)
+    routers = args.router_deployment
+    summary = router_metrics.summarize(
+        rows,
+        router_deployments=routers,
+        watch_models=[m for m in args.watch_models.split(",") if m.strip()],
+        ptu_catalog=models.keys(),
+        candidate_model=args.model,
+    )
+    routers = summary["router_deployments"]
+    df = _series_df(rows, args.model, True, routers)
+    if df[["input_tokens_sum", "output_tokens_sum"]].to_numpy().sum() == 0:
+        served = ", ".join(r["model"] for r in summary["served_models"]) or "none"
+        raise SystemExit(f"No tokens for served model '{args.model}' in the metrics. Served models: {served}")
+    direct_df = _series_df(rows, args.model, False, routers)
+    result = _analyze(df, args, pricing, ptu_output_weight)
+    direct = _analyze(direct_df, args, pricing, ptu_output_weight)
+
+    fee_per_m = args.router_fee_per_m
+    fee_source = "--router-fee-per-m"
+    if fee_per_m is None:
+        fee_per_m = router_metrics.fetch_router_fee(args.router_region, args.tier)
+        fee_source = f"Azure Retail Prices API ({router_metrics.ROUTER_FEE_METERS[args.tier]}, {args.router_region})"
+    fee = router_metrics.router_fee(summary, fee_per_m, result["time_period_months"], args.fee_excludes_cached)
+    fee["source"] = fee_source
+
+    ref = 95 if 95 in args.percentiles else max(args.percentiles)
+    whatif = {
+        "model": args.model,
+        "percentile": ref,
+        "direct_only": _whatif_row("Direct traffic only", direct, ref),
+        "with_routed": _whatif_row("Direct + routed (router absorbs into PTU)", result, ref),
+    }
+    router_meta = {**summary, "fee": fee, "whatif": whatif,
+                   "markdown": router_metrics.render_markdown(summary, fee, whatif)}
+    return df, source, result, router_meta
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_argparser().parse_args(argv)
+    models = load_models_config()
+    pricing = _resolve_pricing(models, args.model, args.tier)
+
+    ptu_output_weight = (
+        args.ptu_output_weight
+        if args.ptu_output_weight is not None
+        else pricing["ptu_output_weight"]
+    )
+
+    router_meta = None
+    if args.router_metrics or args.router_resource:
+        df, source, result, router_meta = _router_analysis(args, models, pricing, ptu_output_weight)
+    else:
+        df, source = _load_input(args)
+        result = _analyze(df, args, pricing, ptu_output_weight)
 
     meta = {
         "model": pricing["display_name"],
@@ -230,6 +376,9 @@ def main(argv: list[str] | None = None) -> int:
             },
         },
     }
+
+    if router_meta is not None:
+        meta["router"] = router_meta
 
     paths = render_report(df, result, meta, args.out_dir)
     print(f"Wrote {paths['markdown']}")

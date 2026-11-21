@@ -159,6 +159,11 @@ def _render_markdown(
         "",
         _scenarios_table(result["ptu_scenarios"], paygo_monthly, ptu_term),
         "",
+    ]
+    router = meta.get("router")
+    if router:
+        parts += [router["markdown"]]
+    parts += [
         "## Recommendation",
         "",
         _recommend(result["ptu_scenarios"], paygo_monthly, ptu_term),
@@ -277,8 +282,11 @@ def render_report(
 
     paths["markdown"].write_text(_render_markdown(df, result, meta), encoding="utf-8")
 
+    json_meta = dict(meta)
+    if "router" in json_meta:
+        json_meta["router"] = {k: v for k, v in json_meta["router"].items() if k != "markdown"}
     payload = {
-        "metadata": meta,
+        "metadata": json_meta,
         "analysis": {
             "percentile_values": {str(k): float(v) for k, v in result["percentile_values"].items()},
             "time_period_months": result["time_period_months"],

@@ -1,23 +1,25 @@
 ---
 name: paygo-ptu-cost-analyzer
 description: >
-  Headless Azure OpenAI PAYGO-vs-PTU cost analysis and sizing report.
-  Wraps the analysis library of aiappsgbb/ptu-paygo-mix (NOT its
-  Streamlit UI). Supports CSV token-usage input and Log Analytics
-  queries via vendored KQL against `AzureMetrics`. Produces a markdown
-  report, JSON data, and charts. Bundles a synthetic-data generator
-  for offline demos.
+  Headless Azure OpenAI PAYGO-vs-PTU cost analysis and sizing report,
+  wrapping the analysis core of aiappsgbb/ptu-paygo-mix (not its UI).
+  Inputs: CSV, Log Analytics KQL on `AzureMetrics`, or a router-aware
+  path on Azure Monitor metrics split by ModelDeploymentName x
+  ModelName (model router load on your own deployments, router fee,
+  "router absorbs into PTU" what-if). Outputs markdown, JSON and charts;
+  bundles synthetic data for offline demos.
   USE FOR: ptu sizing, paygo vs ptu, provisioned throughput unit
   recommendation, AOAI capacity planning, TPM percentile report,
   spillover cost estimate, log analytics token query, AzureMetrics
-  PTU, CSV-based PTU sizing, headless cost report,
+  PTU, CSV-based PTU sizing, model router PTU sizing, router fee,
+  routed traffic per served model, headless cost report,
   paygo-ptu-cost-analyzer.
-  DO NOT USE FOR: capacity reservation purchase workflow, deploying
-  the upstream Streamlit UI (use the upstream repo), real-time TPM
-  monitoring (use azure-monitor-query directly), pricing for
+  DO NOT USE FOR: capacity reservation purchase, the upstream
+  Streamlit UI, real-time TPM monitoring, router vs fixed-model
+  quality benchmarks (use token-economics), pricing for
   non-Azure-OpenAI services.
 metadata:
-  version: "1.1.1"
+  version: "1.2.0"
 ---
 
 # PAYGO vs PTU Cost Analyzer
@@ -51,8 +53,10 @@ runs in a terminal, in CI, or inside an agent — never as a web app).
 | `--csv <path>` | Customer already exported their token usage (e.g. via the upstream `docs/sample_kql_queries.md`, Excel, Cost Mgmt export). | None. |
 | `--workspace <id>` | You have direct read access on the Log Analytics workspace ingesting Cognitive Services metrics. | `DefaultAzureCredential` (az login / managed identity / env vars / VS Code) with `Log Analytics Reader` on the workspace. |
 | `--synthetic` | Offline demo, regression test, or you need to show the report shape before real data lands. | None. |
+| `--router-metrics <json>` | Model router in use: saved Azure Monitor metrics JSON (`az monitor metrics list -o json`). See [Router-aware analysis](#router-aware-analysis). | None. |
+| `--router-resource <id>` | Model router in use: fetch the same metrics live from the Foundry resource. | `DefaultAzureCredential` with **Monitoring Reader** (or Reader) on the Foundry resource. |
 
-All three paths converge on the same `run_analysis()` and `render_report()`
+All paths converge on the same `run_analysis()` and `render_report()`
 so the output contract is identical.
 
 ### Required CSV schema
@@ -76,7 +80,7 @@ loudly with a descriptive `ValueError`.
 # 0. One-time deps (matches references/upstream-pin.md)
 python3 -m venv .venv && source .venv/bin/activate
 pip install "pandas~=3.0.3" "numpy~=2.4.6" "matplotlib~=3.11.0" \
-            "azure-identity~=1.25.3" "azure-monitor-query~=2.0.0"
+            "azure-identity~=1.27.0" "azure-monitor-query~=2.0.0"
 
 # 1. Offline demo — uses the bundled synthetic generator
 python references/run_report.py \
@@ -98,6 +102,16 @@ python references/run_report.py \
   --deployment my-gpt-5-4-prod \
   --model gpt-5.4 \
   --out-dir ./live-report
+
+# 4. Router-aware: bundled synthetic router mix (offline), PTU candidate = served model
+python references/run_report.py \
+  --router-metrics references/sample_router_metrics.json \
+  --model gpt-5.4-mini --router-fee-per-m 0.14 --out-dir ./router-report
+
+# 5. Router-aware, live from the Foundry resource (Monitoring Reader)
+python references/run_report.py \
+  --router-resource /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account> \
+  --time-range 7d --model gpt-5.4-mini --save-metrics ./metrics.json --out-dir ./router-live
 
 # A bundled tiny CSV is also available for smoke tests:
 python references/run_report.py \
@@ -122,6 +136,9 @@ Every run produces exactly these four files under `--out-dir`:
 
 The markdown report always contains the substrings `"PTU Sizing"`,
 `"PAYGO Baseline"`, and `"p95"` (the freshness validator asserts these).
+In router-aware mode `report.md` also contains `## Router-aware load`, and
+`report.json` carries `metadata.router` (router deployments, per-deployment and
+per-served-model tokens, fee, what-if, flags).
 
 ---
 
@@ -142,6 +159,117 @@ The markdown report always contains the substrings `"PTU Sizing"`,
 | `--percentiles` | `50,75,90,95,99` | Comma-separated, in `(0,100)`. |
 | `--ptu-output-weight` | model's `ptu.output_weight` | Multiplier on output-token TPM when sizing PTUs. Defaults to the selected model's catalog `ptu.output_weight` (e.g. `6` for gpt-5.4); pass a value to override (e.g. `1.0` for the old flat behaviour). Falls back to `1` if the model has no `output_weight`. |
 | `--out-dir` | `./paygo-ptu-report` | Created if absent. |
+| `--router-metrics <path>` | — | Azure Monitor metrics JSON split by `ModelDeploymentName` x `ModelName`. Mutually exclusive with the other sources. |
+| `--router-resource <id>` | — | Foundry resource ID; fetches the metrics live for `--time-range`. Mutually exclusive. |
+| `--router-deployment` | auto | Extra router deployment name (repeatable). Deployments in `ModelRouter*` metrics or named `model-router*` are detected. |
+| `--router-fee-per-m` | Retail Prices API | Router fee, USD per 1M input tokens. Default: meter `Model Routers GL 1M Tokens` (`--tier global`) or `Model Routers DZ 1M Tokens` (`--tier data_zone`) in `--router-region`. |
+| `--router-region` | `swedencentral` | Region for the fee lookup. |
+| `--fee-excludes-cached` | off | Do not charge the fee on cached input (not documented either way). |
+| `--watch-models` | `gpt-4.1,gpt-4o,gpt-5.4` | Served-model families flagged when routed traffic lands on them. |
+| `--save-metrics <path>` | — | With `--router-resource`, also save the fetched JSON for an offline rerun. |
+
+In router-aware mode `--model` is the PTU candidate **served** model (for
+example `gpt-5.4-mini`), not the router deployment.
+
+---
+
+## Router-aware analysis
+
+Labels: **[Documented]** = official docs, **[Tested]** = measured live,
+**[Analysis]** = how this skill derives a number.
+
+### Why routed traffic matters for PTU
+
+- **[Documented]** After model router picks a model, your own deployment of that
+  model (exact name and version, same Foundry resource) serves the request first:
+  a Global, Data Zone or Regional **Provisioned** deployment for OpenAI models,
+  then a Standard / Global Standard / Data Zone Standard deployment, then
+  router-managed capacity, then the next-ranked model. On a PTU deployment you pay
+  only the routing fee; on pay-as-you-go you pay its usage plus the fee
+  ([how model router chooses capacity][router-capacity]).
+- So a PTU of the model the router picks most often absorbs routed load you
+  currently pay for at PAYGO rates. Sizing it from direct traffic alone under-sizes it.
+
+### Where the per-model split lives
+
+- **[Documented]** Azure Monitor **platform metrics** on the Foundry resource: filter
+  `ModelDeploymentName`, split by `ModelName` ([monitor model router][router-monitor]).
+  `InputTokens`, `OutputTokens`, `ModelRequests` and the `ModelRouter*` metrics all
+  carry both dimensions ([supported metrics][cs-metrics]).
+- **[Documented]** Diagnostic-settings export to Log Analytics flattens dimensions:
+  "Metrics with dimensions are exported by diagnostic settings as flattened
+  single-dimensional metrics, aggregated across dimension values"
+  ([metrics index][metrics-index]). `AzureMetrics` therefore has **no** `ModelName`,
+  and a KQL query cannot split router traffic per served model. The router-aware
+  path reads the metrics REST API (or the JSON from `az monitor metrics list`), not
+  Log Analytics.
+
+```bash
+az monitor metrics list --resource <foundry-resource-id> \
+  --metrics ModelRequests InputTokens OutputTokens ModelRouterRequests \
+            ModelRouterInputTokens ModelRouterOutputTokens ModelRouterCachedTokens \
+  --aggregation Total --interval PT1M \
+  --start-time <utc-start> --end-time <utc-end> \
+  --filter "ModelDeploymentName eq '*' and ModelName eq '*'" -o json > metrics.json
+```
+
+### What the metrics show
+
+**[Tested]** 2026-11-21, Sweden Central, `model-router` `2025-11-18` Global
+Standard plus an own `gpt-5.4-mini` Global Standard deployment in the same
+resource, Responses API, Entra ID. 10 router requests pinned to `gpt-5.4-mini`
+(`routing_config.models`), 10 unpinned router requests, 10 direct requests:
+
+| Metric family | Router-managed traffic | Routed requests served by your deployment |
+|---|---|---|
+| `InputTokens` / `OutputTokens` / `ModelRequests` | `ModelDeploymentName` = router deployment, `ModelName` = served model | Under **your deployment's** name, mixed with its direct traffic (20 requests on `gpt-5.4-mini`) |
+| `ModelRouter*` | Router deployment x served model | Also counted, under the router deployment (10 requests, `gpt-5.4-mini`) |
+
+- The `x-ratelimit-key` response header was the own deployment's name when it served
+  the request and `model-router` otherwise.
+- Metrics appeared within about 5 minutes. Allow more before trusting an empty result.
+- `ModelName` casing differs between families (`DeepSeek-V4.1-Flash` vs
+  `deepseek-v4.1-flash`); the parser lower-cases names.
+- The two families can disagree for the same requests (DeepSeek: 84 vs 46 input
+  tokens), so routed load on your deployments is clamped to the load seen there.
+- **Not tested:** a PTU deployment serving routed traffic (no PTU was purchased); the
+  PTU-first order above is documented behaviour. Auto traffic surfacing as a
+  `model-router-<version>` deployment name is reported in issue #562; the parser
+  treats any `model-router*` name as a router.
+
+### How the report uses them
+
+**[Analysis]** For served model M (`--model`):
+
+```text
+total load(M)        = Σ InputTokens/OutputTokens where ModelName = M, over ALL deployments
+router-managed(M)    = the same, on router deployments only
+routed(M)            = ModelRouter*Tokens where ModelName = M
+routed on your(M)    = min(routed(M) − router-managed(M), total(M) − router-managed(M))
+direct(M)            = total(M) − router-managed(M) − routed on your(M)
+router fee / month   = fee per 1M × Σ routed input tokens (all models) / months observed
+```
+
+The report adds a **Router-aware load** section: load per deployment x served
+model, router-originated tokens per served model, the router fee, a PTU what-if
+(direct only vs direct + routed, at p95) and risk flags for routed traffic on
+`--watch-models` families or on models without PTU pricing in `models.json`. The
+main PTU sizing tables use the direct + routed load. Direct cached input is not in
+these metrics, so it counts as non-cached (PTU sizing errs high).
+
+- **[Tested]** Router fee, Azure Retail Prices API, Sweden Central (read
+  2026-11-21): `Model Routers GL 1M Tokens` $0.14 and `Model Routers DZ 1M Tokens`
+  $0.154 per 1M tokens. The CLI fetches it unless you pass `--router-fee-per-m`.
+- **Not documented:** whether cached input is exempt from the fee. The default
+  charges all routed input; `--fee-excludes-cached` shows the other case.
+- **[Documented]** Billed amounts: Cost Management, filter the Foundry resource and
+  tag **Deployment** = router deployment ([monitor model router][router-monitor]).
+  Metric-based costs here are estimates.
+
+[router-capacity]: https://learn.microsoft.com/azure/foundry/openai/concepts/model-router-how-it-works#how-model-router-chooses-capacity
+[router-monitor]: https://learn.microsoft.com/azure/foundry/openai/how-to/monitor-model-router
+[cs-metrics]: https://learn.microsoft.com/azure/azure-monitor/reference/supported-metrics/microsoft-cognitiveservices-accounts-metrics
+[metrics-index]: https://learn.microsoft.com/azure/azure-monitor/reference/metrics-index
 
 ---
 
@@ -185,8 +313,10 @@ references/
 │   ├── default.kql                # AzureMetrics → required schema (InputTokens path)
 │   └── active_tokens.kql          # Alternative: derives cached from ActiveTokens
 ├── render_report.py               # md + json + 2× png (matplotlib, Agg backend)
+├── router_metrics.py              # Router-aware metrics parser/split/fee (stdlib; skill-specific)
 ├── run_report.py                  # CLI entry point
 ├── sample_input.csv               # ~10 KB demo CSV (240 rows, reproducible seed)
+├── sample_router_metrics.json     # SYNTHETIC router + own-deployment metrics mix (60 min)
 └── upstream-pin.md                # Tier-B freshness contract
 ```
 
@@ -250,6 +380,9 @@ utilisation, error analysis).
 
 - **Pricing drift:** as above — re-vendor `models.json` when upstream
   bumps. `upstream-pin.md` tracks the SHA.
+- **`AzureMetrics` has no per-model split.** Diagnostic-settings export flattens
+  metric dimensions, so `--deployment` on the KQL path may match nothing and
+  routed traffic cannot be attributed there. Use the router-aware path.
 - **`AzureMetrics.Dimensions` shape varies** by API version — the
   bundled default KQL coalesces `DimensionJson`, `Dimensions`, and
   `Tags`, which covers everything we've seen. If you see empty
@@ -273,4 +406,6 @@ utilisation, error analysis).
 - Upstream repo: <https://github.com/aiappsgbb/ptu-paygo-mix> (SHA pinned in `references/upstream-pin.md`)
 - Azure OpenAI PTU docs: <https://learn.microsoft.com/azure/ai-services/openai/how-to/provisioned-throughput-onboarding>
 - AzureMetrics schema: <https://learn.microsoft.com/azure/azure-monitor/reference/tables/azuremetrics>
-- Related awesome-gbb skills: `azure-tenant-isolation` (for `--workspace` runs), `foundry-observability` (downstream consumers of the JSON report).
+- Model router: <https://learn.microsoft.com/azure/foundry/openai/concepts/model-router-how-it-works>, <https://learn.microsoft.com/azure/foundry/openai/how-to/monitor-model-router>
+- Cognitive Services metrics: <https://learn.microsoft.com/azure/azure-monitor/reference/supported-metrics/microsoft-cognitiveservices-accounts-metrics>
+- Related awesome-gbb skills: `token-economics` (router vs fixed-model cost/quality), `azure-tenant-isolation` (for `--workspace` runs), `foundry-observability` (downstream consumers of the JSON report).

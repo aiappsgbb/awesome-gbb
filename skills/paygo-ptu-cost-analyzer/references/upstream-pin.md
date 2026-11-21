@@ -63,11 +63,12 @@ packages:
       pyplot import — required when no DISPLAY).
   - name: azure-identity
     source: pypi
-    version: "~=1.25.3"
+    version: "~=1.27.0"
     upstream_changelog: https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/identity/azure-identity/CHANGELOG.md
     notes: |
-      Only used by the `--workspace` (Log Analytics) path via
-      `DefaultAzureCredential`. Not exercised by the synthetic-mode smoke.
+      Used by the `--workspace` (Log Analytics) path and the router-aware
+      `--router-resource` path (ARM metrics REST) via `DefaultAzureCredential`.
+      Not exercised by the synthetic-mode smoke.
   - name: azure-monitor-query
     source: pypi
     version: "~=2.0.0"
@@ -78,6 +79,10 @@ packages:
 docs_to_revalidate:
   - https://learn.microsoft.com/azure/ai-services/openai/how-to/provisioned-throughput-onboarding
   - https://learn.microsoft.com/azure/azure-monitor/reference/tables/azuremetrics
+  - https://learn.microsoft.com/azure/foundry/openai/concepts/model-router-how-it-works
+  - https://learn.microsoft.com/azure/foundry/openai/how-to/monitor-model-router
+  - https://learn.microsoft.com/azure/azure-monitor/reference/supported-metrics/microsoft-cognitiveservices-accounts-metrics
+  - https://learn.microsoft.com/azure/azure-monitor/reference/metrics-index
   - https://pypi.org/project/pandas/
   - https://pypi.org/project/numpy/
   - https://pypi.org/project/matplotlib/
@@ -100,6 +105,16 @@ known_issues:
     upstream_url: https://learn.microsoft.com/azure/azure-monitor/reference/tables/azuremetrics
     status: open
     workaround_location: SKILL.md § "KQL path notes"
+  - id: KI-004
+    description: "Diagnostic-settings export flattens metric dimensions, so AzureMetrics/KQL cannot split model router traffic by served ModelName; the router-aware path reads Azure Monitor platform metrics instead"
+    upstream_url: https://learn.microsoft.com/azure/azure-monitor/reference/metrics-index
+    status: open
+    workaround_location: SKILL.md § "Router-aware analysis"
+  - id: KI-005
+    description: "ModelRouter* and InputTokens/OutputTokens metric families can disagree for the same routed requests (observed for a non-OpenAI model) and use different ModelName casing; parser lower-cases names and clamps routed-on-own load"
+    upstream_url: https://learn.microsoft.com/azure/azure-monitor/reference/supported-metrics/microsoft-cognitiveservices-accounts-metrics
+    status: open
+    workaround_location: SKILL.md § "Router-aware analysis"
 
 validation:
   requires:
@@ -115,7 +130,7 @@ validation:
       "pandas~=3.0.3" \
       "numpy~=2.4.6" \
       "matplotlib~=3.11.0" \
-      "azure-identity~=1.25.3" \
+      "azure-identity~=1.27.0" \
       "azure-monitor-query~=2.0.0"
     python - <<'PY'
     import pandas as pd
@@ -166,14 +181,15 @@ validation:
     - "AttributeError"
     - "AssertionError"
 
-last_validated: "2026-07-06"
+last_validated: "2026-11-21"
 validated_by: ricchi
-known_issues_count: 3
+known_issues_count: 5
 re_pin_log:
   - "2026-05-18: initial pin v1.0.0 (ricchi)"
   - "2026-05-18: v1.0.1 — also vendor active_tokens_backup.kql as queries/active_tokens.kql alternative (ricchi)"
   - "2026-06-18: v1.0.6 — matplotlib ~=3.10.9 → ~=3.11.0 (MINOR); remove github_only from validation.requires (upstream repo aiappsgbb/ptu-paygo-mix is private/inaccessible); remove 3 dead docs_to_revalidate URLs; fix KI-002 upstream_url (copilot-bot)"
   - "2026-07-06: v1.1.0 — re-vendor upstream e1786f8 → 2636464: models.json adds gpt-5.5 + gpt-5.4-mini, data_zone pricing for gpt-5.4, priority_processing PAYGO rates, and ptu.output_weight (4/6/8); analysis.py + formatting.py byte-identical; wire run_report.py --ptu-output-weight to default from the model's catalog output_weight; KEEP skill-specific data.py + queries/*.kql --workspace path that upstream deleted at 14a5bec (repo accessible again but private) (ricchi)"
+  - "2026-11-21: v1.2.0 — router-aware path (router_metrics.py, --router-metrics/--router-resource, sample_router_metrics.json) on Azure Monitor platform metrics split by ModelDeploymentName x ModelName, router fee via Retail Prices API, router-absorbs-into-PTU what-if, KI-004/KI-005; azure-identity ~=1.25.3 → ~=1.27.0 (MINOR). Live-tested in Sweden Central with a temporary model-router + own gpt-5.4-mini deployment, deleted and purged (ricchi)"
 ---
 
 # Upstream pin — `paygo-ptu-cost-analyzer` skill
@@ -195,7 +211,7 @@ trail. Keep them in sync.
 | **Pinned commit subject** | `Merge branch 'charendt:main' into main` |
 | **License** | MIT |
 | **First authored against** | 2026-05-18 |
-| **Last re-validated** | 2026-07-06 |
+| **Last re-validated** | 2026-11-21 |
 
 The SHA above is a **last-vendored marker**, not an auto-refreshing pin.
 Re-validate by:
@@ -220,7 +236,7 @@ keeps it for `--workspace` mode — see § 5, KI-002).
 | `pandas` | PyPI | `~=3.0.3` | Dataframe + datetime parsing |
 | `numpy` | PyPI | `~=2.4.6` | Vectorised math + percentile |
 | `matplotlib` | PyPI | `~=3.11.0` | Headless Agg backend |
-| `azure-identity` | PyPI | `~=1.25.3` | `DefaultAzureCredential` (KQL path only) |
+| `azure-identity` | PyPI | `~=1.27.0` | `DefaultAzureCredential` (KQL path + router `--router-resource`) |
 | `azure-monitor-query` | PyPI | `~=2.0.0` | `LogsQueryClient` (KQL path only) |
 
 Cap pattern is PEP 440 compatible-release per AGENTS.md § 9.5. Patch
@@ -251,7 +267,7 @@ python -m venv .venv && . .venv/bin/activate
 pip install --quiet --upgrade pip
 pip install --quiet \
   "pandas~=3.0.3" "numpy~=2.4.6" "matplotlib~=3.11.0" \
-  "azure-identity~=1.25.3" "azure-monitor-query~=2.0.0"
+  "azure-identity~=1.27.0" "azure-monitor-query~=2.0.0"
 python - <<'PY'
 import pandas as pd, numpy as np, matplotlib
 matplotlib.use("Agg")
@@ -308,10 +324,15 @@ gate for vendored-file correctness; this pin is the gate for dep drift.
 | `--synthetic --model gpt-5.5` (new catalog entry) | ✅ | New model prices + sizes render |
 | `--synthetic --model gpt-5.4-mini` (new catalog entry) | ✅ | New model prices + sizes render |
 | `--ptu-output-weight` defaults from catalog `ptu.output_weight` | ✅ | gpt-5.4 defaults to 6; explicit `--ptu-output-weight 1.0` still overrides |
+| v1.2.0: `--router-metrics references/sample_router_metrics.json --model gpt-5.4-mini` | ✅ | Router-aware section, fee, what-if (20 → 35 PTUs at p95 with routed load), flags for gpt-4.1 and deepseek |
+| v1.2.0: `--router-resource <temporary Foundry resource> --time-range 1h` (live) | ✅ | gpt-5.4-mini: 168 routed-on-own + 168 direct input tokens = the 10 + 10 requests sent; router fee fetched from Retail Prices API ($0.14 GL) |
+| v1.2.0: `azure-identity~=1.27.0` | ✅ | Live `DefaultAzureCredential` metrics fetch succeeded |
 
 Captured at `last_validated: 2026-07-06` by `ricchi` (macOS Darwin 25.5.0
 + Python 3.13.5). Re-vendor of upstream e1786f8 → 2636464 (Option C:
 pure analysis core + pricing catalog; `--workspace`/KQL path retained).
+v1.2.0 rows captured 2026-11-21 by `ricchi` (macOS, Python 3.15.2); the
+live resource group was deleted and the Foundry account purged afterwards.
 
 ---
 
