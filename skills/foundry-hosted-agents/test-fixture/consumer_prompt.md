@@ -310,9 +310,22 @@ Write the matching FAIL marker and stop.
 Reuse the isolated management SDK environment from Step 2; do not change its
 package cohort after deployment.
 
-Use a Bash heredoc to write the following program to
-`/tmp/foundry-hosted-agents-smoke.py`, then run it once with
-`/tmp/foundry-hosted-agents-venv/bin/python`:
+Use the same pattern as Step 2: with one Bash heredoc, write a script
+`/tmp/foundry-hosted-agents-ga-checks.sh` that starts with
+`set -euo pipefail`, writes the following program to
+`/tmp/foundry-hosted-agents-smoke.py` with an inner `cat > ... <<'PY'`
+heredoc, and then runs
+`/tmp/foundry-hosted-agents-venv/bin/python /tmp/foundry-hosted-agents-smoke.py`.
+Then run `bash /tmp/foundry-hosted-agents-ga-checks.sh` once.
+
+> **CLI tool approval is not Azure RBAC.** In this non-interactive runner the
+> Copilot CLI refuses shell commands that start a Python interpreter directly
+> (`python - <<'PY'`, `.../venv/bin/python script.py`) with
+> `Permission denied and could not request permission from user`. That message
+> is a local tool-approval refusal, not an Azure 401/403: do not report it as
+> an identity failure. Run Python only inside a `bash /tmp/<file>.sh` script.
+> Evidence records are written only by these scripts; never append them
+> yourself, and never write PASS unless the script produced them.
 
 ```python
 import os
@@ -442,6 +455,9 @@ agent name. Additional versions, changed image contents or missing receipts
 block cleanup. This helper must never adopt a retained resource from an earlier
 run or delete an entire shared repository.
 
+Write this block to `/tmp/foundry-hosted-agents-teardown.sh` with a Bash
+heredoc and run `bash /tmp/foundry-hosted-agents-teardown.sh`:
+
 ```bash
 ownership="$(cat /tmp/foundry-hosted-agents-owned-path)"
 timeout 300 /tmp/foundry-hosted-agents-venv/bin/python \
@@ -454,7 +470,8 @@ timeout 300 /tmp/foundry-hosted-agents-venv/bin/python \
 
 After the invoke check passes, verify the evidence file contains every
 required success record below (teardown records are best-effort and not
-checked here):
+checked here). Write this block to `/tmp/foundry-hosted-agents-verify.sh` with a
+Bash heredoc and run `bash /tmp/foundry-hosted-agents-verify.sh`:
 
 ```bash
 python3 - <<'PY'
