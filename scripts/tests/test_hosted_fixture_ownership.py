@@ -35,6 +35,22 @@ class HostedFixtureOwnershipTests(unittest.TestCase):
             with self.subTest(image=image), self.assertRaises(ValueError):
                 owned.image_binding({"container_configuration": {"image": image}}, "test.azurecr.io", self.name)
 
+    def test_image_accepts_azd_project_service_env_repository(self):
+        repository = f"my-agent-project/{self.name}-{self.name}"
+        reference = repository + ":azd-deploy-456"
+        self.assertEqual(
+            owned.image_binding({"container_configuration": {"image": "test.azurecr.io/" + reference}},
+                                "test.azurecr.io", self.name),
+            (reference, repository))
+        for other in (f"other-project/{self.name}-{self.name}:v1", f"my-agent-project/{self.name}-other:v1"):
+            with self.subTest(image=other), self.assertRaises(ValueError):
+                owned.image_binding({"container_configuration": {"image": "test.azurecr.io/" + other}},
+                                    "test.azurecr.io", self.name)
+        self.client.agents.get.side_effect = ResourceNotFoundError("missing")
+        with tempfile.TemporaryDirectory() as work, patch.object(owned, "acr", return_value=[repository]), \
+                self.assertRaises(ValueError):
+            owned.prepare(self.client, Path(work) / "state.json", self.name, self.owner["registry"], self.owner["endpoint"])
+
     def test_prepare_rejects_existing_agent_before_any_registry_or_write(self):
         with tempfile.TemporaryDirectory() as work, patch.object(owned, "acr") as acr, self.assertRaises(ValueError):
             owned.prepare(self.client, Path(work) / "state.json", self.name, self.owner["registry"], self.owner["endpoint"])
