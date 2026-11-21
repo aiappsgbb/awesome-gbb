@@ -1,4 +1,4 @@
-"""Invoke a GHCP SDK hosted agent via Invocations SSE endpoint (advanced/optional).
+"""Invoke a Copilot SDK hosted agent via Invocations SSE endpoint (advanced/optional).
 
 The PRIMARY invoke path is `azd ai agent invoke <name> '{"input": "..."}'
 --protocol invocations --output raw` — see SKILL.md § "Invoking the Agent".

@@ -3,15 +3,14 @@ name = "my-agent"
 version = "1.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "github-copilot-sdk~=1.0.0",
-    "azure-ai-agentserver-invocations==1.0.0b6",
-    # Transitive dep of -invocations, which declares `core>=2.0.0b7` (unbounded
-    # upper). Pinned EXACT so a future core b8+ symbol change cannot silently
-    # break fresh container builds (grounded: b4+b7 crash-looped on
-    # `ImportError: CHAT_ISOLATION_KEY`; b6+b7 proven healthy live 2026-07-04).
-    "azure-ai-agentserver-core==2.0.0b7",
-    "azure-identity~=1.25.3",
-    "python-dotenv~=1.2.2",
+    # Microsoft Copilot SDK 2.0 (renamed from github-copilot-sdk). Both
+    # distributions install the same `copilot` import package: uninstall
+    # github-copilot-sdk before installing this one.
+    "microsoft-copilot-sdk~=2.0.1",
+    "azure-ai-agentserver-invocations~=1.3.0",
+    "azure-ai-agentserver-core~=2.3.0",
+    "azure-identity~=1.27.0",
+    "pydantic~=2.11",
 ]
 
 [tool.setuptools]
@@ -19,4 +18,3 @@ packages = []
 
 [tool.uv]
 required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
-prerelease = "if-necessary-or-explicit"
