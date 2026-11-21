@@ -2,7 +2,8 @@
 
 You are a developer on a customer team. Your agent has a growing tool catalog and
 you want to prove, with real numbers, that the `token-economics` skill's deferred
-tool loading (`tool_search` + `defer_loading`) works against your CI deployment.
+tool loading (`tool_search` + `defer_loading`) works against your CI deployment, and
+that its model router measurement script prices Auto against a fixed model.
 
 **This is an execution smoke, not a catalog inspection.** Do not browse or
 summarize other skills. Execute the steps below directly in Bash tool calls.
@@ -22,7 +23,8 @@ Run exactly this (cheap audit evidence; do NOT `view` large files):
 
 ```bash
 echo "skills/token-economics/SKILL.md"
-sed -n '/^## Measure before and after/,/^## Other levers/p' skills/token-economics/SKILL.md | head -40
+sed -n '/^## Measure before and after/,/^## Model router economics/p' skills/token-economics/SKILL.md | head -30
+sed -n '/^### Measure the router on your workload/,/^## Other levers/p' skills/token-economics/SKILL.md | head -20
 ```
 
 ## Step 0 — Auth context (show, do not assert)
@@ -39,8 +41,9 @@ If `FOUNDRY_PROJECT_ENDPOINT` prints empty, write the FAIL marker (Step 3) with
 reason `auth context missing: FOUNDRY_PROJECT_ENDPOINT` and stop.
 
 Pre-granted, do NOT re-grant: the CI identity already has **Cognitive Services
-OpenAI User** on the shared AI Services account. This fixture creates **no**
-Azure resources, so there is nothing to tear down.
+OpenAI User** and **Foundry User** on the shared AI Services account. This fixture
+creates **no** Azure resources (model router Auto needs no deployment), so there is
+nothing to tear down.
 
 ## Step 1 — Install the skill's pinned dependencies
 
@@ -83,13 +86,53 @@ Success criteria (ALL must hold):
 
 On HTTP 429 / `Too Many Requests`, wait 60 seconds and rerun Step 2 once.
 
+## Step 2b — Run the canonical model router script (do not rewrite it)
+
+Run the skill's script exactly as documented: Auto (`--router auto`, Balanced) against
+the fixed `gpt-5.4-mini` deployment, priced from the Azure Retail Prices API.
+
+```bash
+. .venv-token-economics-t3/bin/activate
+set +e
+python skills/token-economics/references/python/measure_router.py \
+  --endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
+  --router auto --modes deployment --baseline gpt-5.4-mini \
+  --cases skills/token-economics/references/router_cases.jsonl \
+  --repeats 1 --region swedencentral > /tmp/token-economics-router.json
+echo "router_exit=$?"
+set -e
+python - <<'EOF'
+import json
+r = json.load(open("/tmp/token-economics-router.json"))
+if "error" in r:
+    print("ERROR", r["error"], r["detail"][:300]); raise SystemExit(0)
+print("router_fee", r["prices"]["router_fee_usd_per_1m_input"], r["prices"]["router_fee_meter"])
+for a in r["arms"]:
+    print(a["arm"], "quality", a["quality_pct"], "errors", a["errors"], "usd_per_1k", a["usd_per_1k_tasks"],
+          "fee_share", a["fee_share_pct"], "models", {m: v["count"] for m, v in a["models"].items()},
+          "unpriced", a["unpriced_models"], "error_sample", a["error_samples"][:1])
+EOF
+```
+
+Success criteria for Step 2b (ALL must hold):
+
+1. `router_exit` is `0` or `1` (`1` only means some answering model had no retail
+   meter; `2` is a failure).
+2. `router_fee` is a positive number read from the `Model Routers GL 1M Tokens` meter.
+3. Both arms (`router:auto:deployment`, `fixed:gpt-5.4-mini`) have `errors` lower than
+   12 and a non-empty `models` map; the `fixed:gpt-5.4-mini` arm answered only with
+   `gpt-5.4-mini`.
+4. The router arm has a non-zero `fee_share` (the routing fee was charged).
+
+On HTTP 429 / `Too Many Requests`, wait 60 seconds and rerun Step 2b once.
+
 ## Step 3 — Write the result marker (deterministic, MANDATORY)
 
 Your FINAL action is a Bash tool call writing the marker file. The file's byte
 content is what CI grades, not your reply. Do not print the marker token anywhere
 else.
 
-If all three success criteria held:
+If every Step 2 and Step 2b success criterion held:
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/token-economics-smoke-result
