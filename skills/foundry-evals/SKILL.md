@@ -16,7 +16,7 @@ description: >
   historical name, not a shipped skill), writing your own optimizer loop
   (foundry-agent-optimizer is a historical name; use the official workflow).
 metadata:
-  version: "1.6.0"
+  version: "1.6.1"
 ---
 
 # Foundry Agent Evaluations
@@ -1177,7 +1177,7 @@ proves the agent earned its budget at the next steering committee.
 > and evaluator wiring**. Related concerns are owned by peer skills:
 > - **Identity & RBAC for eval runners** → see `foundry-hosted-agents` § Identity & RBAC
 > - **Hosted-agent lifecycle & deployment** → see `foundry-hosted-agents` § Troubleshooting
-> - **Knowledge base / VectorDB orchestration & continuous indexing** → see `foundry-iq` § Continuous indexing
+> - **Knowledge base / VectorDB orchestration & continuous indexing** → see `foundry-iq-agent-integration` § Continuous indexing
 >
 > If your eval runner has permission errors or your agent fails to start during continuous eval,
 > check those upstream SKILLs first. This SKILL focuses on the eval definition and score extraction.

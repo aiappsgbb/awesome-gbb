@@ -40,7 +40,7 @@ skills:
     depends_on: []
   foundry-hosted-agents:
     depends_on: []
-  foundry-iq:
+  foundry-iq-agent-integration:
     depends_on: []
   foundry-toolbox:
     depends_on: []

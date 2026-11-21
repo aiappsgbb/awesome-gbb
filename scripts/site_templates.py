@@ -770,7 +770,7 @@ def render_home(
         'copilot plugin install awesome-gbb@awesome-gbb'
         '</code></pre>'
         '<p class="install-alt">Or pick one skill at a time: '
-        '<code>gh skill install aiappsgbb/awesome-gbb foundry-iq</code></p>'
+        '<code>gh skill install aiappsgbb/awesome-gbb foundry-iq-agent-integration</code></p>'
         '</section>'
     )
 

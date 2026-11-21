@@ -51,7 +51,7 @@ CATEGORIES: dict[str, list[str]] = {
         'foundry-teams-bot',
         'ghcp-hosted-agents',
         'foundry-mcp-aca', 'foundry-mcp-aca-jobs', 'foundry-mcp-auth', 'foundry-evals',
-        'foundry-agentops', 'foundry-iq',
+        'foundry-agentops', 'foundry-iq-agent-integration',
         'foundry-doc-vision-speech', 'foundry-observability',
         'foundry-cross-resource', 'foundry-vnet-deploy',
         'foundry-caphost-lifecycle',
