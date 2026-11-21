@@ -25,7 +25,7 @@ information found" and (b) overwrite this run's transcript at
 `/tmp/foundry-observability-transcript.log`, defeating the workflow's
 retry classifier (AGENTS.md § 9.7 Pattern 19 addendum). The workflow
 ALREADY captures your output via the outer `tee` — your job is to
-EXECUTE Steps 0-3 directly in Bash tool calls, not to "run the smoke".
+EXECUTE Steps 0-3 (including Step 1b) directly in Bash tool calls, not to "run the smoke".
 
 Do whatever the skill's `SKILL.md` tells you to do, but do NOT improvise
 from training-data knowledge of OpenTelemetry or Azure Monitor — read
@@ -47,11 +47,14 @@ echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
 echo "APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:+set}"
 echo "LAW_WORKSPACE_ID=${LAW_WORKSPACE_ID:+set}"
+echo "FOUNDRY_PROJECT_ENDPOINT=${FOUNDRY_PROJECT_ENDPOINT:+set}"
+echo "FOUNDRY_MODEL_DEPLOYMENT=${FOUNDRY_MODEL_DEPLOYMENT:-}"
 az account show --output table || echo "(az cache not inherited — relying on SDK DefaultAzureCredential)"
 ```
 
 If `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
-`APPLICATIONINSIGHTS_CONNECTION_STRING`, or `LAW_WORKSPACE_ID` prints
+`APPLICATIONINSIGHTS_CONNECTION_STRING`, `LAW_WORKSPACE_ID`,
+`FOUNDRY_PROJECT_ENDPOINT`, or `FOUNDRY_MODEL_DEPLOYMENT` prints
 empty, the workflow's `env:` block is broken (Pattern 11). That is a
 workflow bug, not a skill bug. Write the FAIL marker (Step 3) with
 reason `auth context missing: <var-name>` and stop.
@@ -128,6 +131,37 @@ prove the span actually landed in LAW — that's Step 2.
 
 ---
 
+## Step 1b — Insights monitor lifecycle (HARD GATE)
+
+`SKILL.md § Insights monitors (agent_insight_monitors)` documents the
+monitor lifecycle and ships the canonical helper
+`skills/foundry-observability/references/python/insights_monitors.py`.
+Run its `smoke()` **unmodified** — do NOT copy or redefine its functions.
+It registers a temporary external agent (`ci-insights-<uuid8>`), creates
+a monitor with `enabled=False` against `FOUNDRY_MODEL_DEPLOYMENT` (a
+GPT-5 mini judge, documented as supported), reads it back with `get`,
+then disables it, cancels any active run, deletes the monitor and agent
+and proves both return 404. It never starts an analysis run and never
+enables the 6-hour schedule, so it spends no judge tokens.
+
+The CI caller and project identities are pre-granted; do NOT create role
+assignments, deployments or connections.
+
+```bash
+pip install --quiet "azure-ai-projects~=2.11.0" azure-identity
+python skills/foundry-observability/references/python/insights_monitors.py
+```
+
+Expected output: one line starting with `INSIGHTS_SMOKE` containing
+`'enabled': False` and `'cleanup': 'deleted'`, and exit code 0.
+
+HARD GATE: on non-zero exit, write the FAIL marker with reason
+`insights monitor lifecycle failed: <first error line>` and stop. A
+failure inside cleanup is a real failure here — a monitor left behind
+is exactly the waste this skill guards against.
+
+---
+
 ## Step 2 — KQL probe against Log Analytics Workspace (SOFT GATE — Pattern 13)
 
 App Insights → LAW ingestion is asynchronous with documented variable
@@ -178,27 +212,28 @@ This step is a SOFT gate per Pattern 13. The marker file in Step 3
 remains `SMOKE_RESULT=PASS` regardless of `LAW_HIT` — the NOTE above
 captures the lag observation for the audit trail without false-FAILing
 on physics we don't control. Do NOT write `SMOKE_RESULT=FAIL` because
-of an empty KQL result; only write FAIL if Step 0 or Step 1 failed.
+of an empty KQL result; only write FAIL if Step 0, Step 1 or Step 1b failed.
 
 ---
 
 ## Step 3 — Marker contract (deterministic, MANDATORY)
 
-No teardown — the probe span is ephemeral telemetry and there are no
-Azure resources to delete (Pattern 25 N/A for this fixture).
+No extra teardown — the probe span is ephemeral telemetry, and Step 1b
+already deleted (and verified the 404 of) its own monitor and agent.
 
 Your FINAL action is to invoke the Bash tool to write the marker file.
 The file's literal byte content is what CI grades; your assistant-text
 reply is NOT graded.
 
 On success (Step 0 auth context complete AND Step 1 `configure_azure_monitor`
-+ span emission succeeded — Step 2 outcome does NOT affect the marker):
++ span emission succeeded AND Step 1b exited 0 — Step 2 outcome does NOT
+affect the marker):
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-observability-smoke-result
 ```
 
-On Step 0 or Step 1 failure ONLY:
+On Step 0, Step 1 or Step 1b failure ONLY:
 
 ```bash
 printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-observability-smoke-result

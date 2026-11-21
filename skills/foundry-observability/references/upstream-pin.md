@@ -24,6 +24,14 @@ packages:
       exception_rate, rai_denials, agt_denials, rate_limit_events.
       Sync uses azure.monitor.query.LogsQueryClient; async uses
       azure.monitor.query.aio.LogsQueryClient.
+  - name: azure-ai-projects
+    source: pypi
+    version: "2.11.0"
+    upstream_changelog: https://pypi.org/project/azure-ai-projects/#history
+    notes: |
+      Foundry Insights monitors (project_client.agent_insight_monitors),
+      used by references/python/insights_monitors.py. Aligned with the
+      foundry-evals pin (~=2.11.0). 2.11.0 is the documented minimum.
 
 docs_to_revalidate:
   - https://learn.microsoft.com/azure/azure-monitor/app/create-workspace-resource
@@ -33,6 +41,8 @@ docs_to_revalidate:
   - https://learn.microsoft.com/azure/container-apps/observability
   - https://learn.microsoft.com/azure/data-explorer/kusto/query/
   - https://pypi.org/project/azure-monitor-opentelemetry/
+  - https://learn.microsoft.com/azure/foundry/observability/how-to/agent-insights
+  - https://learn.microsoft.com/python/api/azure-ai-projects/azure.ai.projects.operations.agentinsightmonitorsoperations
 
 known_issues:
   - id: KI-001
@@ -57,18 +67,21 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "azure-monitor-opentelemetry~=1.8.9" "azure-monitor-query~=2.0.0"
+    pip install --quiet "azure-monitor-opentelemetry~=1.8.9" "azure-monitor-query~=2.0.0" "azure-ai-projects~=2.11.0"
     python - <<'PY'
     from azure.monitor.opentelemetry import configure_azure_monitor
     from azure.monitor.query import LogsQueryClient
     from azure.monitor.query.aio import LogsQueryClient as AsyncLogsQueryClient
+    from azure.ai.projects.operations import AgentInsightMonitorsOperations
+    from azure.ai.projects.models import AgentInsightPriorities, ExternalAgentDefinition
+    assert all(hasattr(AgentInsightMonitorsOperations, m) for m in ("create", "get", "update", "delete", "begin_create_run", "cancel_run", "list_runs"))
     print("ok foundry-observability imports")
     PY
   expected_output:
     - "ok foundry-observability imports"
 
-last_validated: 2026-07-06
-validated_by: copilot-bot
+last_validated: 2026-11-21
+validated_by: unsafecode
 known_issues_count: 1
 ---
 
@@ -81,6 +94,7 @@ This Tier-B pin captures the Azure Monitor OpenTelemetry wrapper dependency and 
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
 | `azure-monitor-opentelemetry` | PyPI | **1.6.0** | Wrapper package; do not pin individual `opentelemetry-*` packages separately |
+| `azure-ai-projects` | PyPI | **2.11.0** | Foundry Insights monitors (`agent_insight_monitors`); same pin as `foundry-evals` |
 
 ## Verification checklist
 

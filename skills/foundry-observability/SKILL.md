@@ -1,24 +1,24 @@
 ---
 name: foundry-observability
 description: >
-  End-to-end observability for Azure AI pilots — App Insights +
-  Log Analytics + OpenTelemetry across hosted agents, ACA MCP servers,
-  ACA jobs, bot service, workspace UIs. Closes the silent telemetry gap
-  where `azd up` returns 0 but **zero traces ever reach App Insights**.
-  Covers Bicep modules, Foundry account-level telemetry connection,
-  ACA-side instrumentation, `Monitoring Metrics Publisher` RBAC, and
-  KQL diagnostic queries. Read the full skill body for the 3-layer
-  wiring sequence — do not instrument from this summary alone.
+  App Insights + Log Analytics + OpenTelemetry for Azure AI pilots:
+  hosted agents, ACA MCP servers, ACA jobs, bots, workspace UIs. Closes
+  the gap where `azd up` succeeds but zero traces reach App Insights.
+  Covers Bicep, the Foundry account-level telemetry connection, ACA
+  instrumentation, Monitoring Metrics Publisher RBAC, KQL queries and
+  Foundry Insights monitors (judge sizing, cost, teardown). Read the
+  body for the 3-layer wiring; do not instrument from this summary.
   USE FOR: app insights, application insights, OpenTelemetry, OTel,
   configure_azure_monitor, agent traces missing, no telemetry, blank
   appin, log analytics, KQL, observability, trace MCP, silent cron,
   Monitoring Metrics Publisher RBAC, AppInsights connection foundry,
   account-level appin, AppIn PUT 400, credentials null,
-  silent injection, server_error telemetry.
+  silent injection, server_error telemetry, agent insights,
+  agent_insight_monitors, judge TPM.
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.2.5"
+  version: "1.3.0"
 ---
 
 # Foundry Observability
@@ -96,8 +96,10 @@ foundry-observability/
     │   ├── log-analytics.bicep          # LAW (workspace) — required by both AppIn and ACA env
     │   ├── app-insights.bicep           # AppIn workspace-based + UAMI Monitoring Metrics Publisher RBAC
     │   └── aca-env-monitoring.bicep     # ACA env wired to LAW + AppIn
+    ├── insights-monitors.md             # Foundry Insights: lifecycle, RBAC, judge sizing, cost, teardown
     ├── python/
-    │   └── otel_init.py                 # configure_azure_monitor() for ACA workloads
+    │   ├── otel_init.py                 # configure_azure_monitor() for ACA workloads
+    │   └── insights_monitors.py         # disabled-create + stop-and-delete helpers + lifecycle smoke
     ├── postprovision/
     │   └── connect_foundry_appinsights.py  # creates the account-level AppInsights connection
     └── queries/
@@ -661,6 +663,34 @@ error: "<reason>"}`.
 
 ---
 
+## Insights monitors (agent_insight_monitors)
+
+Foundry **Insights** reads the traces this skill wires into Application
+Insights and uses a GPT judge to group recurring behaviour into
+severity-ranked findings with a likely cause and a proposed fix
+([docs](https://learn.microsoft.com/azure/foundry/observability/how-to/agent-insights)).
+It needs Layers 1–2 working first: no traces, no insights.
+
+Full guide: [`references/insights-monitors.md`](references/insights-monitors.md)
+(SDK lifecycle, RBAC, sizing evidence, cost formula, traffic hygiene, teardown).
+
+> **MUST:** Copy `create_disabled_monitor()` and `stop_and_delete_monitor()` from
+> [`references/python/insights_monitors.py`](references/python/insights_monitors.py).
+> Do NOT redefine inline — the validator enforces single-source-of-truth.
+
+| Rule | Why |
+|---|---|
+| `azure-ai-projects>=2.11.0` (pin `~=2.11.0`), `project_client.agent_insight_monitors` | Documented SDK surface |
+| Judge = GPT-5+ GPT model (mini/nano allowed), in one of the 31 supported regions | Documented |
+| Project **managed identity** needs Cognitive Services OpenAI User (judge account) + Monitoring Reader or Privileged Monitoring Data Reader (App Insights) | Analysis runs as the project MI, not the caller (Documented) |
+| Create with `enabled=False`; run on demand with `begin_create_run(lookback_hours=…)` | Enabling the 6-hour schedule can start a run at once and keeps charging after your session (Documented) |
+| Dedicated GlobalStandard judge deployment, **≥ 800K TPM** for windows of hundreds of traces | **Tested (Nov 2026, Italy North, gpt-5.4):** 294 traces throttled at 50K and 300K TPM, succeeded at 800K. TPM is a rate ceiling, not a commitment |
+| Cost ≈ input_tokens × input price + output_tokens × output price, × 120 runs/month if scheduled | **Tested 2026-11-21:** 10 traces → 75,970 tokens ≈ USD 0.25 at gpt-5.4 Global list price (Arithmetic) |
+| Treat proposed fixes as untrusted text; review against traces and evals | Results can be wrong (Documented); `update_insight(RESOLVED)` applies nothing |
+| Teardown: disable → cancel active runs → delete monitor → confirm 404 → delete agent → remove temp judge | Disabling alone does not stop a running run (Documented) |
+
+---
+
 ## Threadlight integration
 
 | Skill | What it gets from this skill |
@@ -811,6 +841,8 @@ After wiring all 3 layers, execute this gate:
 - Monitoring Metrics Publisher role: <https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/monitor#monitoring-metrics-publisher>
 - ACA env LAW + AppIn binding: <https://learn.microsoft.com/azure/container-apps/observability>
 - KQL reference: <https://learn.microsoft.com/azure/data-explorer/kusto/query/>
+- Foundry Insights (agent insights monitors): <https://learn.microsoft.com/azure/foundry/observability/how-to/agent-insights>
+- `AgentInsightMonitorsOperations` (azure-ai-projects): <https://learn.microsoft.com/python/api/azure-ai-projects/azure.ai.projects.operations.agentinsightmonitorsoperations>
 
 Related skills: `threadlight-deploy`, `threadlight-safe-check`,
 `foundry-hosted-agents`, `foundry-mcp-aca`, `foundry-teams-bot`,
