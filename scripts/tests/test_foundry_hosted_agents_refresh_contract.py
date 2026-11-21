@@ -118,7 +118,7 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
         self.assertNotIn("- agent-framework-foundry ~= 1.10.1", self.timeout)
 
     def test_pin_records_refresh_validation_date(self) -> None:
-        self.assertEqual(str(self.pin_frontmatter["last_validated"]), "2026-08-18")
+        self.assertEqual(str(self.pin_frontmatter["last_validated"]), "2026-11-21")
         self.assertNotIn("this 2026-08-04 validation", self.pin)
 
     def test_historical_upgrade_recipes_are_guarded_from_copying(self) -> None:
@@ -314,6 +314,9 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
                 "ok hosted coherent stack",
                 "ok update_details",
                 "ok otel bundle",
+                "ok resilience pins",
+                "ok resilient recovery test",
+                "ok copilot import overlap detected",
             ],
         )
 
