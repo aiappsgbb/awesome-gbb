@@ -211,8 +211,8 @@ class PolicyBot:
     """
     High-level PolicyBot that combines retrieval and generation.
 
-    Integrates Knowledge Agent retrieval with Azure OpenAI for
-    grounded Q&A over policy documents.
+    Integrates knowledge base retrieval (GA `2026-10-01`) with Azure OpenAI
+    for grounded Q&A over policy documents.
     """
 
     def __init__(
@@ -221,10 +221,13 @@ class PolicyBot:
         retriever = None,
         system_prompt: str = None
     ):
-        from .knowledge_agent_manager import KnowledgeAgentRetriever
+        if retriever is None:
+            from .knowledge_base_manager import KnowledgeBaseRetriever
+
+            retriever = KnowledgeBaseRetriever()
 
         self.openai = openai_client or AzureOpenAIClient()
-        self.retriever = retriever or KnowledgeAgentRetriever()
+        self.retriever = retriever
         self.conversation_history: List[Dict[str, str]] = []
 
         self.system_prompt = system_prompt or """You are PolicyBot, a helpful HR assistant that answers questions about company policies.

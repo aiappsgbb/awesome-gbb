@@ -31,6 +31,12 @@ PIN = ROOT / "skills" / "foundry-iq" / "references" / "upstream-pin.md"
 KNOWLEDGE_AGENT_MANAGER = (
     ROOT / "skills" / "foundry-iq" / "scripts" / "knowledge_agent_manager.py"
 )
+KNOWLEDGE_BASE_MANAGER = (
+    ROOT / "skills" / "foundry-iq" / "scripts" / "knowledge_base_manager.py"
+)
+MODEL_ACCESS_MODULE = (
+    ROOT / "skills" / "foundry-iq" / "test-fixture" / "infra" / "foundry-model-access.bicep"
+)
 AZURE_OPENAI_CLIENT = (
     ROOT / "skills" / "foundry-iq" / "scripts" / "azure_openai_client.py"
 )
@@ -52,6 +58,14 @@ SEARCH_MODULE = (
 DEPS = ROOT / ".github" / "skill-deps.yml"
 
 GA_KINDS = {"searchIndex", "azureBlob", "indexedOneLake", "web"}
+GA_KINDS_2026_10 = GA_KINDS | {"indexedSql", "file", "indexedSharePoint"}
+PREVIEW_KINDS_2026_10 = {
+    "remoteSharePoint",
+    "fabricDataAgent",
+    "fabricOntology",
+    "mcpServer",
+    "workIQ",
+}
 PREVIEW_KINDS = {
     "indexedSql",
     "file",
@@ -68,7 +82,7 @@ def _frontmatter(text: str) -> dict:
     return yaml.safe_load(text.split("---", 2)[1])
 
 
-def _availability_rows(skill: str) -> dict[str, str]:
+def _availability_rows(skill: str, column: int = 1) -> dict[str, str]:
     match = re.search(
         r"<!-- GA_KNOWLEDGE_SOURCE_MATRIX_START -->"
         r"(.*?)"
@@ -82,8 +96,8 @@ def _availability_rows(skill: str) -> dict[str, str]:
     rows: dict[str, str] = {}
     for line in match.group(1).splitlines():
         cells = [cell.strip().strip("`") for cell in line.strip().strip("|").split("|")]
-        if len(cells) >= 3 and cells[0] not in {"Wire kind", "---"}:
-            rows[cells[0]] = cells[1]
+        if len(cells) >= 3 and cells[0] not in {"Wire kind"} and not cells[0].startswith("---"):
+            rows[cells[0]] = cells[column]
     return rows
 
 
@@ -94,6 +108,18 @@ def _load_knowledge_agent_manager():
     )
     if spec is None or spec.loader is None:
         raise AssertionError("could not load knowledge_agent_manager.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_knowledge_base_manager():
+    spec = importlib.util.spec_from_file_location(
+        "foundry_iq_knowledge_base_manager",
+        KNOWLEDGE_BASE_MANAGER,
+    )
+    if spec is None or spec.loader is None:
+        raise AssertionError("could not load knowledge_base_manager.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -150,13 +176,18 @@ class FoundryIqGaContractTests(unittest.TestCase):
         cls.live_smoke = LIVE_SMOKE.read_text(encoding="utf-8") if LIVE_SMOKE.exists() else ""
 
     def test_skill_declares_stable_api_and_exact_ga_kinds(self) -> None:
-        rows = _availability_rows(self.skill)
-        ga = {kind for kind, status in rows.items() if status == "GA"}
-        preview = {kind for kind, status in rows.items() if status == "Preview"}
-
-        self.assertEqual(ga, GA_KINDS)
-        self.assertEqual(preview, PREVIEW_KINDS)
+        rows_2026_10 = _availability_rows(self.skill, column=1)
+        rows_2026_04 = _availability_rows(self.skill, column=2)
+        for rows, ga_kinds, preview_kinds in (
+            (rows_2026_10, GA_KINDS_2026_10, PREVIEW_KINDS_2026_10),
+            (rows_2026_04, GA_KINDS, PREVIEW_KINDS),
+        ):
+            ga = {kind for kind, status in rows.items() if status == "GA"}
+            preview = {kind for kind, status in rows.items() if status == "Preview"}
+            self.assertEqual(ga, ga_kinds)
+            self.assertEqual(preview, preview_kinds)
         self.assertIn("`2026-04-01`", self.skill)
+        self.assertIn("**GA (default)**", self.skill)
         self.assertNotRegex(
             self.skill,
             r"general availability on the \*\*`2026-05-01-preview`\*\*",
@@ -173,25 +204,27 @@ class FoundryIqGaContractTests(unittest.TestCase):
         )
 
     def test_supporting_artifacts_pin_the_ga_surface(self) -> None:
-        self.assertIn("2026-04-01", self.prd)
+        self.assertIn("2026-10-01", self.prd)
         self.assertIn(
-            "AI_SEARCH_KNOWLEDGE_SOURCE_API_VERSION=2026-04-01",
+            "AI_SEARCH_KNOWLEDGE_SOURCE_API_VERSION=2026-10-01",
             self.env_sample,
         )
-        self.assertIn("azure-search-documents~=12.0.0", self.requirements)
+        self.assertIn("azure-search-documents~=12.1.0", self.requirements)
         self.assertIn(
             "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-migrate",
             self.pin,
         )
-        self.assertIn(
-            "https://learn.microsoft.com/rest/api/searchservice/knowledge-sources/create-or-update?view=rest-searchservice-2026-04-01",
-            self.pin,
-        )
+        for url in (
+            "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-create-knowledge-base",
+            "https://learn.microsoft.com/azure/foundry/agents/how-to/foundry-iq-connect",
+            "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-enable-disable",
+        ):
+            self.assertIn(url, self.pin)
         self.assertNotIn(
             "2025-11-01-preview",
             KNOWLEDGE_AGENT_MANAGER.read_text(encoding="utf-8"),
         )
-        self.assertIn("Bearer {token}", self.live_smoke)
+        self.assertIn("Bearer {search_token}", self.live_smoke)
         self.assertIn(
             "Bearer {token}",
             KNOWLEDGE_AGENT_MANAGER.read_text(encoding="utf-8"),
@@ -414,16 +447,14 @@ class FoundryIqGaContractTests(unittest.TestCase):
             self.env_sample,
         )
         self.assertIn("KNOWLEDGE_AGENT_MODEL_NAME=gpt-4.1-mini", self.env_sample)
-        self.assertNotIn("REASONING_EFFORT=", self.env_sample)
+        self.assertNotIn("KNOWLEDGE_AGENT_REASONING_EFFORT=", self.env_sample)
         self.assertNotIn("OUTPUT_MODE=", self.env_sample)
         self.assertIn(
             '"content": [{"type": "text", "text": msg["content"]}]',
-            self.skill,
+            manager,
         )
-        self.assertIn(
-            'request_body["targetIndexParams"] = [',
-            self.skill,
-        )
+        self.assertIn('request_body["targetIndexParams"] = [', manager)
+        self.assertIn("LEGACY, 2025-05-01-preview", manager)
         self.assertNotIn(
             '"content": [{"text": msg["content"]}]',
             self.skill,
@@ -437,15 +468,25 @@ class FoundryIqGaContractTests(unittest.TestCase):
             self.skill,
         )
 
-    def test_live_fixture_exercises_only_a_ga_kind(self) -> None:
+    def test_live_fixture_exercises_ga_kb_and_agent_mcp_tool(self) -> None:
         fixture = FIXTURE.read_text(encoding="utf-8")
-        self.assertIn("api-version=2026-04-01", fixture)
+        self.assertIn("api-version=2026-10-01", fixture)
+        self.assertIn('SEARCH_API = "2026-10-01"', self.live_smoke)
+        self.assertIn('MCP_API = "2026-11-01-preview"', self.live_smoke)
         self.assertIn('"kind": "searchIndex"', self.live_smoke)
-        self.assertIn('"exercised_ga_kind": returned["kind"]', self.live_smoke)
+        self.assertIn('"retrievalReasoningEffort": {"kind": "low"}', self.live_smoke)
+        self.assertIn('"modelQueryPlanning" in activity_types', self.live_smoke)
+        self.assertIn('"category": "RemoteTool"', self.live_smoke)
+        self.assertIn('"authType": "ProjectManagedIdentity"', self.live_smoke)
+        self.assertIn('"allowed_tools": ["knowledge_base_retrieve"]', self.live_smoke)
+        self.assertIn('f"{project_endpoint}/openai/v1/responses"', self.live_smoke)
+        self.assertNotIn("openai/v1/responses?api-version", self.live_smoke)
+        self.assertNotIn("2025-05-01-preview", self.live_smoke)
         self.assertNotIn("preview_kinds_treated_as_ga", fixture)
         self.assertNotIn("preview_kinds_treated_as_ga", self.live_smoke)
         self.assertIn("preview-only", fixture)
         self.assertIn("/tmp/foundry-iq-smoke-result", fixture)
+        self.assertIn("foundry-iq-ga-kb-agent-ok", fixture)
         self.assertIn(
             "python3 skills/foundry-iq/test-fixture/live_smoke.py",
             fixture,
@@ -460,6 +501,7 @@ class FoundryIqGaContractTests(unittest.TestCase):
         step_zero = fixture.split("## Step 0", 1)[1].split("---", 1)[0]
         self.assertNotIn("skills/foundry-iq/SKILL.md", step_zero)
         self.assertIn('echo "AZURE_CLIENT_ID=', step_zero)
+        self.assertIn('echo "FOUNDRY_PROJECT_ENDPOINT=', step_zero)
         self.assertNotRegex(
             fixture,
             r"(?:cat|head|tail|sed|view)\s+.*skills/foundry-iq/SKILL\.md",
@@ -496,6 +538,12 @@ class FoundryIqGaContractTests(unittest.TestCase):
         self.assertIn("Reader permits tag-based Resource Graph discovery", infra)
         self.assertIn("Microsoft.Search/searchServices@2026-03-01-preview", infra)
         self.assertIn("knowledgeRetrieval: 'standard'", infra)
+        self.assertIn("type: 'SystemAssigned'", infra)
+        self.assertIn("ciSearchIndexDataContributor", infra)
+        self.assertIn("projectSearchIndexDataReader", infra)
+        model_access = MODEL_ACCESS_MODULE.read_text(encoding="utf-8")
+        self.assertIn("5e0bd9bd-7b93-4f28-af87-19fc36ad61bd", model_access)
+        self.assertIn("scope: resourceGroup(foundryResourceGroupName)", infra)
 
     def test_subscription_deploy_uses_dedicated_foundry_iq_resource_group(self) -> None:
         parameters_text = INFRA_PARAMETERS.read_text(encoding="utf-8")
@@ -558,40 +606,29 @@ class FoundryIqGaContractTests(unittest.TestCase):
 
     def test_live_fixture_enforces_rest_response_contract(self) -> None:
         fixture = self.live_smoke
-        self.assertIn(
-            'f"{endpoint}/indexes(\'{index_name}\')?api-version={API_VERSION}"',
-            fixture,
-        )
-        self.assertIn(
-            'f"{endpoint}/knowledgesources(\'{source_name}\')"',
-            fixture,
-        )
-        self.assertIn(
-            'f"?api-version={API_VERSION}"',
-            fixture,
-        )
+        self.assertIn('return f"{endpoint}/{path}?api-version={api}"', fixture)
         self.assertIn('"Prefer": "return=representation"', fixture)
         self.assertGreaterEqual(
             fixture.count("assert response.status_code == 201"),
-            2,
+            3,
         )
-        self.assertIn("assert response.status_code == 200", fixture)
-        self.assertIn('"knowledge_source_delete_status"', fixture)
-        self.assertIn('"index_delete_status"', fixture)
+        self.assertIn('SEARCH_DELETE_OK = (204, 404)', fixture)
+        for key in ("agent", "connection", "knowledge_base", "knowledge_source", "index"):
+            self.assertIn(f'"{key}":', fixture)
         prompt = FIXTURE.read_text(encoding="utf-8")
-        self.assertIn("`knowledge_source_delete_status` is `204` or `404`", prompt)
-        self.assertIn("`index_delete_status` is `204` or `404`", prompt)
+        self.assertIn("`index_delete_status` are `204` or `404`", prompt)
+        self.assertIn("`agent_mcp_tool` is exactly `knowledge_base_retrieve`", prompt)
 
     def test_live_fixture_fails_when_delete_evidence_is_incomplete(self) -> None:
         live_smoke = _load_live_smoke()
 
         class Response:
-            def __init__(self, status_code: int, body: dict | None = None) -> None:
+            def __init__(self, status_code: int, body: object = None, text: str = "") -> None:
                 self.status_code = status_code
-                self._body = body or {}
-                self.text = json.dumps(self._body)
+                self._body = body if body is not None else {}
+                self.text = text or json.dumps(self._body)
 
-            def json(self) -> dict:
+            def json(self) -> object:
                 return self._body
 
             def raise_for_status(self) -> None:
@@ -611,57 +648,50 @@ class FoundryIqGaContractTests(unittest.TestCase):
         class Requests:
             def __init__(self, delete_results: list[object]) -> None:
                 self.delete_results = delete_results
-                self.index_name = ""
+                self.answer = ""
+                self.deleted: list[str] = []
 
-            def post(self, *_args, **_kwargs) -> Response:
-                return Response(200, {"data": [{"name": "search-ci"}]})
+            def post(self, url: str, **kwargs) -> Response:
+                body = kwargs.get("json") or {}
+                if "ResourceGraph" in url:
+                    if "searchservices" in body["query"]:
+                        return Response(200, {"data": [{"name": "search-ci"}]})
+                    return Response(200, {"data": [{"id": "/subscriptions/s/resourceGroups/r/providers/Microsoft.CognitiveServices/accounts/acct"}]})
+                if "/docs/index" in url:
+                    self.answer = re.search(r"HERON-[0-9A-F]+", json.dumps(body)).group(0)
+                    return Response(200)
+                if "/retrieve" in url:
+                    return Response(200, {"activity": [{"type": "modelQueryPlanning"}], "response": [self.answer]})
+                if "/agents?" in url:
+                    return Response(200)
+                if "/openai/v1/responses" in url:
+                    output = [{"type": "mcp_call", "name": "knowledge_base_retrieve", "output": self.answer}]
+                    return Response(200, {"output": output, "output_text": self.answer})
+                raise AssertionError(url)
 
             def get(self, url: str, **_kwargs) -> Response:
-                if "/knowledgesources(" in url:
-                    return Response(
-                        200,
-                        {
-                            "kind": "searchIndex",
-                            "searchIndexParameters": {
-                                "searchIndexName": self.index_name,
-                            },
-                        },
-                    )
+                if "/deployments/" in url:
+                    return Response(200, {"properties": {"model": {"name": "gpt-5.4-mini"}}})
+                if "$count" in url:
+                    return Response(200, text="2")
                 return Response(200)
 
-            def put(self, url: str, **kwargs) -> Response:
-                if "/indexes(" in url:
-                    self.index_name = kwargs["json"]["name"]
-                return Response(201)
+            def put(self, url: str, **_kwargs) -> Response:
+                return Response(200 if "management.azure.com" in url else 201)
 
-            def delete(self, *_args, **_kwargs) -> Response:
+            def delete(self, url: str, **_kwargs) -> Response:
+                self.deleted.append(url)
                 result = self.delete_results.pop(0)
                 if isinstance(result, Exception):
                     raise result
                 return Response(result)
 
+        # Order: agent, connection, knowledge base, knowledge source, index.
         cases = (
-            (
-                [204, 404],
-                0,
-                {
-                    "knowledge_source_delete_status": 204,
-                    "index_delete_status": 404,
-                },
-            ),
-            (
-                [204, 500],
-                1,
-                {
-                    "knowledge_source_delete_status": 204,
-                    "index_delete_status": 500,
-                },
-            ),
-            (
-                [RuntimeError("delete failed"), 204],
-                1,
-                {"knowledge_source_delete_status": None, "index_delete_status": 204},
-            ),
+            ([200, 200, 204, 204, 404], 0, {"agent_delete_status": 200, "index_delete_status": 404}),
+            ([200, 200, 204, 204, 500], 1, {"index_delete_status": 500}),
+            ([200, 200, 200, 204, 204], 1, {"knowledge_base_delete_status": 200}),
+            ([RuntimeError("delete failed"), 200, 204, 204, 204], 1, {"agent_delete_status": None}),
         )
         for delete_results, expected_exit, expected_evidence in cases:
             with self.subTest(delete_results=delete_results):
@@ -673,13 +703,18 @@ class FoundryIqGaContractTests(unittest.TestCase):
                     live_smoke.EVIDENCE_PATH = str(evidence_path)
                     with patch.dict(
                         os.environ,
-                        {"AZURE_SUBSCRIPTION_ID": "00000000-0000-0000-0000-000000000000"},
+                        {
+                            "AZURE_SUBSCRIPTION_ID": "00000000-0000-0000-0000-000000000000",
+                            "FOUNDRY_PROJECT_ENDPOINT": "https://acct.services.ai.azure.com/api/projects/proj",
+                        },
                     ):
                         with redirect_stdout(io.StringIO()):
                             self.assertEqual(live_smoke.main(), expected_exit)
                     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
                     for key, expected in expected_evidence.items():
                         self.assertEqual(evidence[key], expected)
+                    self.assertEqual(len(requests.deleted), 5)
+                    self.assertTrue(evidence["agent_answer_has_code"])
 
     def test_stable_sdk_and_mcp_examples_match_current_surfaces(self) -> None:
         self.assertIn(
@@ -696,11 +731,11 @@ class FoundryIqGaContractTests(unittest.TestCase):
         self.assertNotIn("retrieve(query=query)", self.skill)
         self.assertIn("**C. Toolbox MCP wrapping the KB (preview)**", self.skill)
         self.assertIn(
-            "Foundry Agent Service integration uses `2026-05-01-preview`",
+            "Foundry Agent Service integration uses `2026-11-01-preview`",
             self.skill,
         )
         self.assertIn(
-            'pip install "azure-search-documents~=12.0.0"',
+            'pip install "azure-search-documents~=12.1.0"',
             self.skill,
         )
         self.assertNotIn(
@@ -799,13 +834,62 @@ class FoundryIqGaContractTests(unittest.TestCase):
             self.skill,
         )
 
-    def test_patch_version_records_post_merge_corrections(self) -> None:
-        self.assertEqual(_frontmatter(self.skill)["metadata"]["version"], "2.0.0")
+    def test_minor_version_records_ga_refresh(self) -> None:
+        self.assertEqual(_frontmatter(self.skill)["metadata"]["version"], "2.1.0")
         marketplace = json.loads(MARKETPLACE.read_text())
         plugin_version = json.loads(PLUGIN.read_text())["version"]
         self.assertEqual(plugin_version, marketplace["metadata"]["version"])
         self.assertEqual(plugin_version, marketplace["plugins"][0]["version"])
 
+    def test_knowledge_base_manager_builds_ga_requests(self) -> None:
+        module = _load_knowledge_base_manager()
+        with patch.object(module, "_get_search_headers", return_value={}):
+            low = module.KnowledgeBaseRetriever(
+                endpoint="https://s.search.windows.net",
+                knowledge_base_name="kb",
+                reasoning_effort="low",
+            )
+            minimal = module.KnowledgeBaseRetriever(
+                endpoint="https://s.search.windows.net",
+                knowledge_base_name="kb",
+                reasoning_effort="minimal",
+            )
+            with self.assertRaises(ValueError):
+                module.KnowledgeBaseRetriever(
+                    endpoint="https://s.search.windows.net", reasoning_effort="auto"
+                )
+            manager = module.KnowledgeBaseManager(endpoint="https://s.search.windows.net")
+        self.assertEqual(module.GA_API_VERSION, "2026-10-01")
+        low_body = low.build_request("q")
+        self.assertIn("messages", low_body)
+        self.assertNotIn("intents", low_body)
+        minimal_body = minimal.build_request("q")
+        self.assertEqual(minimal_body["intents"], [{"type": "semantic", "search": "q"}])
+        self.assertNotIn("messages", minimal_body)
+        with self.assertRaises(ValueError):
+            manager.create_knowledge_base("kb", ["ks"], reasoning_effort="low")
+        with self.assertRaises(ValueError):
+            manager.create_knowledge_base("kb", ["ks"], reasoning_effort="auto")
+        self.assertEqual(
+            module.kb_mcp_endpoint("https://s.search.windows.net/", "kb"),
+            "https://s.search.windows.net/knowledgebases/kb/mcp?api-version=2026-11-01-preview",
+        )
+
+    def test_skill_documents_agent_wiring_billing_and_trimming(self) -> None:
+        for needle in (
+            "## Foundry Agent Service: prompt agent with the KB MCP tool",
+            '"authType": "ProjectManagedIdentity"',
+            '"allowed_tools": ["knowledge_base_retrieve"]',
+            "api-version query parameter is not allowed when using /v1 path",
+            "## Billing: `knowledgeRetrieval` and HTTP 402",
+            "## Permission trimming",
+            "x-ms-query-work-iq-source-authorization",
+            "**Documentation conflict.**",
+            "`Foundry User` (formerly Azure AI User)",
+        ):
+            self.assertIn(needle, self.skill)
+        self.assertNotIn("| `Azure AI User` |", self.skill)
+        self.assertNotIn("PERMISSION_TRIM_PROPAGATION_NOTE", self.skill)
 
 if __name__ == "__main__":
     unittest.main()

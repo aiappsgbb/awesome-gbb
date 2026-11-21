@@ -49,7 +49,7 @@ This skill covers:
 | FR-7 | Query Decomposition | P1 | Break complex questions into sub-queries |
 | FR-8 | Multi-turn Conversations | P1 | Track conversation history for context |
 | FR-9 | API-specific Retrieval Controls | P2 | Use only controls published for the selected API generation |
-| FR-10 | Stable Knowledge Sources | P0 | Use only `searchIndex`, `azureBlob`, `indexedOneLake`, or `web` on stable REST `2026-04-01` |
+| FR-10 | Stable Knowledge Sources | P0 | Use only knowledge-source kinds marked GA for REST `2026-10-01` (the four `2026-04-01` kinds plus `indexedSql`, `file`, `indexedSharePoint`) |
 
 ### 2.2 Retrieval Modes
 
@@ -111,9 +111,10 @@ This skill covers:
 
 | Surface | Version | Status |
 |---------|---------|--------|
-| Azure AI Search Knowledge Sources / Knowledge Bases | `2026-04-01` | GA programmatic slice |
-| Azure AI Search expanded source kinds and options | `2026-05-01-preview` | Preview |
-| First-generation Knowledge Agents used by bundled scripts | `2025-05-01-preview` | Preview compatibility path |
+| Azure AI Search Knowledge Sources / Knowledge Bases (default) | `2026-10-01` | GA: minimal/low/medium effort, planning, synthesis |
+| Narrow GA knowledge sources / knowledge bases | `2026-04-01` | GA programmatic slice (minimal, extractive) |
+| KB MCP endpoint for Agent Service, MSR1, `auto` | `2026-11-01-preview` | Preview |
+| First-generation Knowledge Agents (legacy helper) | `2025-05-01-preview` | Legacy preview compatibility path |
 | Azure OpenAI | `2024-12-01-preview` | Existing sample dependency |
 
 ### 4.3 Chunking Constraints
@@ -209,8 +210,8 @@ your-app/
 | Limitation | Impact | Workaround |
 |------------|--------|------------|
 | Agentic retrieval latency | 1-3s per query | Use semantic mode for simple queries |
-| Preview reasoning and answer synthesis | Not supported by the bundled `2025-05-01-preview` helper | Use only published 2025-05 request fields, or migrate the complete workload to a newer Knowledge Base API |
-| API version requirements | Stable and preview capabilities differ | Use `2026-04-01` for the four GA kinds; opt into `2026-05-01-preview` only for explicitly preview features |
+| Reasoning and answer synthesis | Not supported by the legacy `2025-05-01-preview` helper | Use `knowledge_base_manager.py` on GA `2026-10-01` |
+| API version requirements | Stable and preview capabilities differ | Use `2026-10-01` by default; opt into `2026-11-01-preview` only for explicitly preview features |
 | Regional availability | Knowledge Agents limited regions | Deploy in supported regions |
 
 ### 8.2 Out of Scope
@@ -226,9 +227,11 @@ The following are NOT provided by this skill:
 
 ## 9. Configuration Guidelines
 
-### 9.1 Knowledge Agent Model Selection
+### 9.1 Knowledge Base and legacy Knowledge Agent model selection
 
-The bundled `2025-05-01-preview` helper requires an explicit Azure OpenAI
+Knowledge bases on `2026-10-01` take the same model triple
+(`resourceUri`, `deploymentId`, `modelName`) from the supported-models table
+in the Search docs (for example `gpt-5.4-mini`). The legacy bundled `2025-05-01-preview` helper requires an explicit Azure OpenAI
 resource URI, deployment ID, and supported model name. Supported
 query-planning model names are `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`,
 `gpt-4.1-mini`, and `gpt-4.1-nano`. Omit `apiKey` and `authIdentity` from

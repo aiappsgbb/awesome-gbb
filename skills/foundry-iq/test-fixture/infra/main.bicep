@@ -18,6 +18,15 @@ param ciPrincipalId string
 @description('Object ID of the operator provisioning the standing CI service.')
 param provisionerPrincipalId string
 
+@description('Resource group of the standing Foundry account that hosts the KB planning model and agent project.')
+param foundryResourceGroupName string
+
+@description('Name of the standing Foundry account that hosts the KB planning model.')
+param foundryAccountName string
+
+@description('Comma-separated managed-identity principal IDs of the Foundry projects that call the KB MCP endpoint.')
+param projectPrincipalIdsCsv string
+
 var deploymentContextIsSafe = resourceGroupName != 'rg-awesome-gbb-ci' && startsWith(resourceGroupName, 'rg-foundry-iq-') && length(resourceGroupName) > length('rg-foundry-iq-') && tenant().tenantId == expectedTenantId && subscription().subscriptionId == expectedSubscriptionId
 
 var tags = {
@@ -52,7 +61,22 @@ module searchService './search.bicep' = {
     tags: tags
     ciPrincipalId: ciPrincipalId
     provisionerPrincipalId: provisionerPrincipalId
+    projectPrincipalIds: map(split(projectPrincipalIdsCsv, ','), id => trim(id))
   }
+}
+
+// Model access is granted on the parent Foundry account, never on a project
+// or deployment.
+module foundryModelAccess './foundry-model-access.bicep' = {
+  scope: resourceGroup(foundryResourceGroupName)
+  name: 'foundry-iq-model-access'
+  params: {
+    foundryAccountName: foundryAccountName
+    searchPrincipalId: searchService.outputs.principalId
+  }
+  dependsOn: [
+    deploymentSafetyGuard
+  ]
 }
 
 output AZURE_RESOURCE_GROUP string = smokeResourceGroup.name

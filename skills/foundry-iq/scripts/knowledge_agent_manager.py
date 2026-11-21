@@ -1,5 +1,8 @@
 """
-Knowledge Agent Manager for Foundry IQ
+Knowledge Agent Manager for Foundry IQ (LEGACY, 2025-05-01-preview)
+
+Use `knowledge_base_manager.py` (GA 2026-10-01) for new work. This module
+is kept only for existing first-generation Knowledge Agent deployments.
 
 Creates and manages Azure AI Search Knowledge Agents for agentic retrieval.
 Knowledge Agents enable query planning, multi-hop reasoning, and intelligent

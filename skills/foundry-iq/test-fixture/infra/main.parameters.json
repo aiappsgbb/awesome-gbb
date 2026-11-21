@@ -19,6 +19,15 @@
     },
     "provisionerPrincipalId": {
       "value": "${AZURE_PRINCIPAL_ID}"
+    },
+    "foundryResourceGroupName": {
+      "value": "${FOUNDRY_RESOURCE_GROUP}"
+    },
+    "foundryAccountName": {
+      "value": "${FOUNDRY_ACCOUNT_NAME}"
+    },
+    "projectPrincipalIdsCsv": {
+      "value": "${FOUNDRY_PROJECT_PRINCIPAL_IDS}"
     }
   }
 }
