@@ -14,6 +14,8 @@ from azure.ai.projects import AIProjectClient
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
 
+AZD_PROJECT = "my-agent-project"  # `name:` in references/yaml/azure.yaml
+
 
 def require(ok, message):
     if not ok:
@@ -42,8 +44,15 @@ def image_binding(definition, registry, agent):
     require(isinstance(image, str) and image.startswith(registry + "/"), "Image registry mismatch")
     reference = image[len(registry) + 1:]
     repository = reference.split("@", 1)[0].split(":", 1)[0]
-    require(repository == agent or repository.startswith(agent + "/"), "Image is outside the run namespace")
+    require(in_run_namespace(repository, agent), "Image is outside the run namespace")
     return reference, repository
+
+
+def in_run_namespace(repository, agent):
+    # azd names the ACR repository <azure.yaml name>/<service>-<env>; the fixture
+    # sets both the service and the azd environment to the agent name.
+    return (repository == agent or repository.startswith(agent + "/")
+            or repository == f"{AZD_PROJECT}/{agent}-{agent}")
 
 
 def version_fingerprint(version):
@@ -73,7 +82,7 @@ def prepare(client, path, name, registry, endpoint):
     else:
         raise ValueError("Agent already exists; never adopt an existing fixture name")
     repos = acr(registry.split(".")[0], ["repository", "list"])
-    require(isinstance(repos, list) and not any(r == name or r.startswith(name + "/") for r in repos),
+    require(isinstance(repos, list) and not any(in_run_namespace(r, name) for r in repos),
             "Run image namespace already exists")
     write_new(path, {"name": name, "registry": registry, "endpoint": endpoint, "absent_at": int(time.time())})
 
