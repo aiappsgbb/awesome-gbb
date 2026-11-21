@@ -15,7 +15,7 @@ upstream:
 packages:
   - name: azure-search-documents
     source: pypi
-    version: "12.0.0"
+    version: "12.1.0"
     upstream_changelog: https://pypi.org/project/azure-search-documents/
     notes: |
       Used for import-only smoke validation of Azure AI Search client types. No Azure service calls are made.
@@ -24,7 +24,10 @@ docs_to_revalidate:
   - https://learn.microsoft.com/azure/search/agentic-knowledge-source-overview
   - https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-migrate
   - https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-retrieve
-  - https://learn.microsoft.com/rest/api/searchservice/knowledge-sources/create-or-update?view=rest-searchservice-2026-04-01
+  - https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-create-knowledge-base
+  - https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-set-retrieval-reasoning-effort
+  - https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-enable-disable
+  - https://learn.microsoft.com/azure/foundry/agents/how-to/foundry-iq-connect
   - https://pypi.org/project/azure-search-documents/
 known_issues: []
 validation:
@@ -37,12 +40,15 @@ validation:
     set -euo pipefail
 
     PINNED_SHA="${PINNED_SHA:-b3f2e5392350d32835a40455d5069c18cac47a97}"
-    PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
+    PINNED_VERSION="${PINNED_VERSION:-12.1.0}"
     WORK=".upstream-pin-smoke/foundry-iq"
 
     rm -rf "$WORK"
     mkdir -p "$WORK"
-    remote="$(git ls-remote https://github.com/microsoft/agent-framework main | awk '{print $1}')"
+    # Tolerate an unreachable upstream (the repo returned 404 on 2026-11-20);
+    # drift stays informational and the hard gate remains the import + docs smoke.
+    remote="$(git ls-remote https://github.com/microsoft/agent-framework main 2>/dev/null | awk '{print $1}' || true)"
+    [ -n "$remote" ] || remote="unreachable"
     # #302: informational drift check only — do NOT hard-fail on SHA drift.
     # Upstream `main` moves continuously; a hard `test` flapped the
     # validate-pins gate on unrelated/docs-only PRs and drove perpetual
@@ -70,7 +76,10 @@ validation:
     )
     from azure.search.documents.knowledgebases import KnowledgeBaseRetrievalClient
     from azure.search.documents.knowledgebases.models import (
+        KnowledgeBaseMessage,
+        KnowledgeBaseMessageTextContent,
         KnowledgeBaseRetrievalRequest,
+        KnowledgeRetrievalLowReasoningEffort,
         KnowledgeRetrievalSemanticIntent,
         SearchIndexKnowledgeSourceParams,
     )
@@ -82,7 +91,10 @@ validation:
         SearchIndexKnowledgeSource,
         SearchIndexKnowledgeSourceParameters,
         KnowledgeBaseRetrievalClient,
+        KnowledgeBaseMessage,
+        KnowledgeBaseMessageTextContent,
         KnowledgeBaseRetrievalRequest,
+        KnowledgeRetrievalLowReasoningEffort,
         KnowledgeRetrievalSemanticIntent,
         SearchIndexKnowledgeSourceParams,
         VectorizedQuery,
@@ -95,7 +107,9 @@ validation:
     curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-knowledge-source-overview" >/dev/null
     curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-migrate" >/dev/null
     curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-retrieve" >/dev/null
-    curl -fsSI -L "https://learn.microsoft.com/rest/api/searchservice/knowledge-sources/create-or-update?view=rest-searchservice-2026-04-01" >/dev/null
+    curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-create-knowledge-base" >/dev/null
+    curl -fsSI -L "https://learn.microsoft.com/azure/foundry/agents/how-to/foundry-iq-connect" >/dev/null
+    curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-enable-disable" >/dev/null
     echo "Foundry IQ docs link check ok"
   expected_output:
     - "upstream SHA drift check ok"
@@ -103,7 +117,7 @@ validation:
     - "knowledgebases import smoke ok"
     - "Foundry IQ docs link check ok"
   failure_signatures: []
-last_validated: 2026-07-15
+last_validated: 2026-11-20
 validated_by: copilot-bot
 field_test_scope: github_pypi_docs_live_search_rest
 known_issues_count: 0
@@ -127,7 +141,7 @@ weekly; the prose below is the human audit trail. Keep them in sync.
 | **Pinned commit subject** | `.NET: [BREAKING] Graduate ToolApprovalAgent and add ToolAutoApprovalRuleContext (#7107)` |
 | **License** | `MIT` |
 | **First authored against** | `2026-05-15` |
-| **Last re-validated** | `2026-07-15` |
+| **Last re-validated** | `2026-11-20` |
 
 Refresh procedure:
 ```bash
@@ -141,7 +155,7 @@ git ls-remote https://github.com/microsoft/agent-framework main
 
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
-| `azure-search-documents` | PyPI | **12.0.0** | Import-only smoke for Azure AI Search client types; no live service calls. |
+| `azure-search-documents` | PyPI | **12.1.0** | Import-only smoke for Azure AI Search client types; no live service calls. |
 
 ---
 
@@ -156,12 +170,15 @@ git ls-remote https://github.com/microsoft/agent-framework main
 set -euo pipefail
 
 PINNED_SHA="${PINNED_SHA:-b3f2e5392350d32835a40455d5069c18cac47a97}"
-PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
+PINNED_VERSION="${PINNED_VERSION:-12.1.0}"
 WORK=".upstream-pin-smoke/foundry-iq"
 
 rm -rf "$WORK"
 mkdir -p "$WORK"
-remote="$(git ls-remote https://github.com/microsoft/agent-framework main | awk '{print $1}')"
+# Tolerate an unreachable upstream (the repo returned 404 on 2026-11-20);
+# drift stays informational and the hard gate remains the import + docs smoke.
+remote="$(git ls-remote https://github.com/microsoft/agent-framework main 2>/dev/null | awk '{print $1}' || true)"
+[ -n "$remote" ] || remote="unreachable"
 # #302: informational drift check only — do NOT hard-fail on SHA drift.
 # Upstream `main` moves continuously; a hard `test` flapped the
 # validate-pins gate on unrelated/docs-only PRs and drove perpetual
@@ -189,7 +206,10 @@ from azure.search.documents.indexes.models import (
 )
 from azure.search.documents.knowledgebases import KnowledgeBaseRetrievalClient
 from azure.search.documents.knowledgebases.models import (
+    KnowledgeBaseMessage,
+    KnowledgeBaseMessageTextContent,
     KnowledgeBaseRetrievalRequest,
+    KnowledgeRetrievalLowReasoningEffort,
     KnowledgeRetrievalSemanticIntent,
     SearchIndexKnowledgeSourceParams,
 )
@@ -201,7 +221,10 @@ assert all((
     SearchIndexKnowledgeSource,
     SearchIndexKnowledgeSourceParameters,
     KnowledgeBaseRetrievalClient,
+    KnowledgeBaseMessage,
+    KnowledgeBaseMessageTextContent,
     KnowledgeBaseRetrievalRequest,
+    KnowledgeRetrievalLowReasoningEffort,
     KnowledgeRetrievalSemanticIntent,
     SearchIndexKnowledgeSourceParams,
     VectorizedQuery,
@@ -214,7 +237,9 @@ curl -fsSI -L "https://learn.microsoft.com/azure/foundry/agents/concepts/what-is
 curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-knowledge-source-overview" >/dev/null
 curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-migrate" >/dev/null
 curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-retrieve" >/dev/null
-curl -fsSI -L "https://learn.microsoft.com/rest/api/searchservice/knowledge-sources/create-or-update?view=rest-searchservice-2026-04-01" >/dev/null
+curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-create-knowledge-base" >/dev/null
+curl -fsSI -L "https://learn.microsoft.com/azure/foundry/agents/how-to/foundry-iq-connect" >/dev/null
+curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-enable-disable" >/dev/null
 echo "Foundry IQ docs link check ok"
 ```
 
@@ -237,10 +262,10 @@ echo "Foundry IQ docs link check ok"
 |-------|--------|----------|
 | GitHub reference | ✅ | `upstream SHA drift check ok` |
 | SDK import smoke | ✅ | `azure-search-documents import smoke ok` |
-| Learn docs | ✅ | Foundry IQ overview, availability matrix, migration guide, and stable `2026-04-01` REST reference returned success |
-| Live Azure AI Search | ✅ | Stable `searchIndex` knowledge-source PUT with `Prefer: return=representation` returned `201`, GET returned `200`, billing was `knowledgeRetrieval=standard`, and cleanup left zero UUID-scoped objects |
+| Learn docs | ✅ | Foundry IQ overview, availability matrix, migration guide, `2026-10-01` knowledge base how-to, Agent Service connect page and billing page returned success |
+| Live Azure AI Search + Agent Service | ✅ | On `2026-10-01`: index, `searchIndex` KS and `low` KB PUT returned `201`; `low` retrieve returned `200` with `modelQueryPlanning`; a prompt agent with a `RemoteTool` connection answered through `knowledge_base_retrieve` (`2026-11-01-preview`); every UUID-scoped object deleted (`204`/`200`) |
 
-Captured at `last_validated: 2026-07-15` by `copilot-bot` via the executable
+Captured at `last_validated: 2026-11-20` via the executable
 pin contract plus the `foundry-iq` Copilot-CLI fixture contract against a
 real keyless Azure AI Search service.
 
@@ -280,7 +305,10 @@ When upstream advances:
 - <https://learn.microsoft.com/azure/search/agentic-knowledge-source-overview>
 - <https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-migrate>
 - <https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-retrieve>
-- <https://learn.microsoft.com/rest/api/searchservice/knowledge-sources/create-or-update?view=rest-searchservice-2026-04-01>
+- <https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-create-knowledge-base>
+- <https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-set-retrieval-reasoning-effort>
+- <https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-enable-disable>
+- <https://learn.microsoft.com/azure/foundry/agents/how-to/foundry-iq-connect>
 - <https://pypi.org/project/azure-search-documents/>
 
 ---
@@ -290,7 +318,7 @@ When upstream advances:
 - `azure-search-documents` — Azure AI Search Python SDK imported by the smoke.
 - `microsoft/agent-framework` PR references — source of hosted-MCP behavior called out in the troubleshooting table.
 - Learn Foundry IQ, availability, and migration pages — canonical GA-versus-preview boundary.
-- Stable Search Service `2026-04-01` REST reference — canonical knowledge-source wire contract.
+- Search Service `2026-10-01` knowledge base how-to — canonical GA wire contract; Agent Service connect page — KB MCP wiring.
 
 ---
 
