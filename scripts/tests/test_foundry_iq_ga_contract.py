@@ -20,40 +20,40 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILL = ROOT / "skills" / "foundry-iq" / "SKILL.md"
-PRD = ROOT / "skills" / "foundry-iq" / "PRD.md"
-ENV_SAMPLE = ROOT / "skills" / "foundry-iq" / ".env.sample"
+SKILL = ROOT / "skills" / "foundry-iq-agent-integration" / "SKILL.md"
+PRD = ROOT / "skills" / "foundry-iq-agent-integration" / "PRD.md"
+ENV_SAMPLE = ROOT / "skills" / "foundry-iq-agent-integration" / ".env.sample"
 CI_ENV_SAMPLE = ROOT / ".env.ci.example"
 PLUGIN = ROOT / "plugin.json"
 MARKETPLACE = ROOT / ".github" / "plugin" / "marketplace.json"
-REQUIREMENTS = ROOT / "skills" / "foundry-iq" / "requirements.txt"
-PIN = ROOT / "skills" / "foundry-iq" / "references" / "upstream-pin.md"
+REQUIREMENTS = ROOT / "skills" / "foundry-iq-agent-integration" / "requirements.txt"
+PIN = ROOT / "skills" / "foundry-iq-agent-integration" / "references" / "upstream-pin.md"
 KNOWLEDGE_AGENT_MANAGER = (
-    ROOT / "skills" / "foundry-iq" / "scripts" / "knowledge_agent_manager.py"
+    ROOT / "skills" / "foundry-iq-agent-integration" / "scripts" / "knowledge_agent_manager.py"
 )
 KNOWLEDGE_BASE_MANAGER = (
-    ROOT / "skills" / "foundry-iq" / "scripts" / "knowledge_base_manager.py"
+    ROOT / "skills" / "foundry-iq-agent-integration" / "scripts" / "knowledge_base_manager.py"
 )
 MODEL_ACCESS_MODULE = (
-    ROOT / "skills" / "foundry-iq" / "test-fixture" / "infra" / "foundry-model-access.bicep"
+    ROOT / "skills" / "foundry-iq-agent-integration" / "test-fixture" / "infra" / "foundry-model-access.bicep"
 )
 AZURE_OPENAI_CLIENT = (
-    ROOT / "skills" / "foundry-iq" / "scripts" / "azure_openai_client.py"
+    ROOT / "skills" / "foundry-iq-agent-integration" / "scripts" / "azure_openai_client.py"
 )
-FIXTURE = ROOT / "skills" / "foundry-iq" / "test-fixture" / "consumer_prompt.md"
-LIVE_SMOKE = ROOT / "skills" / "foundry-iq" / "test-fixture" / "live_smoke.py"
-AZURE_YAML = ROOT / "skills" / "foundry-iq" / "test-fixture" / "azure.yaml"
-INFRA = ROOT / "skills" / "foundry-iq" / "test-fixture" / "infra" / "main.bicep"
+FIXTURE = ROOT / "skills" / "foundry-iq-agent-integration" / "test-fixture" / "consumer_prompt.md"
+LIVE_SMOKE = ROOT / "skills" / "foundry-iq-agent-integration" / "test-fixture" / "live_smoke.py"
+AZURE_YAML = ROOT / "skills" / "foundry-iq-agent-integration" / "test-fixture" / "azure.yaml"
+INFRA = ROOT / "skills" / "foundry-iq-agent-integration" / "test-fixture" / "infra" / "main.bicep"
 INFRA_PARAMETERS = (
     ROOT
     / "skills"
-    / "foundry-iq"
+    / "foundry-iq-agent-integration"
     / "test-fixture"
     / "infra"
     / "main.parameters.json"
 )
 SEARCH_MODULE = (
-    ROOT / "skills" / "foundry-iq" / "test-fixture" / "infra" / "search.bicep"
+    ROOT / "skills" / "foundry-iq-agent-integration" / "test-fixture" / "infra" / "search.bicep"
 )
 DEPS = ROOT / ".github" / "skill-deps.yml"
 
@@ -485,30 +485,31 @@ class FoundryIqGaContractTests(unittest.TestCase):
         self.assertNotIn("preview_kinds_treated_as_ga", fixture)
         self.assertNotIn("preview_kinds_treated_as_ga", self.live_smoke)
         self.assertIn("preview-only", fixture)
-        self.assertIn("/tmp/foundry-iq-smoke-result", fixture)
+        self.assertIn("/tmp/foundry-iq-agent-integration-smoke-result", fixture)
         self.assertIn("foundry-iq-ga-kb-agent-ok", fixture)
         self.assertIn(
-            "python3 skills/foundry-iq/test-fixture/live_smoke.py",
+            "python3 skills/foundry-iq-agent-integration/test-fixture/live_smoke.py",
             fixture,
         )
         self.assertIn("## Step -1", fixture)
         step_minus_one = fixture.split("## Step -1", 1)[1].split("---", 1)[0]
         self.assertIn(
-            'echo "skills/foundry-iq/SKILL.md"',
+            'echo "skills/foundry-iq-agent-integration/SKILL.md"',
             step_minus_one,
         )
         self.assertNotIn("AZURE_CLIENT_ID", step_minus_one)
         step_zero = fixture.split("## Step 0", 1)[1].split("---", 1)[0]
-        self.assertNotIn("skills/foundry-iq/SKILL.md", step_zero)
+        self.assertNotIn("skills/foundry-iq-agent-integration/SKILL.md", step_zero)
         self.assertIn('echo "AZURE_CLIENT_ID=', step_zero)
         self.assertIn('echo "FOUNDRY_PROJECT_ENDPOINT=', step_zero)
         self.assertNotRegex(
             fixture,
-            r"(?:cat|head|tail|sed|view)\s+.*skills/foundry-iq/SKILL\.md",
+            r"(?:cat|head|tail|sed|view)\s+.*skills/foundry-iq-agent-integration/SKILL\.md",
         )
 
         deps = yaml.safe_load(DEPS.read_text(encoding="utf-8"))
-        self.assertIn("foundry-iq", deps["skills"])
+        self.assertIn("foundry-iq-agent-integration", deps["skills"])
+        self.assertNotIn("foundry-iq", deps["skills"])
 
     def test_standing_search_is_provisioned_through_azd(self) -> None:
         fixture = FIXTURE.read_text(encoding="utf-8")
@@ -834,8 +835,8 @@ class FoundryIqGaContractTests(unittest.TestCase):
             self.skill,
         )
 
-    def test_minor_version_records_ga_refresh(self) -> None:
-        self.assertEqual(_frontmatter(self.skill)["metadata"]["version"], "2.1.0")
+    def test_major_version_records_rename(self) -> None:
+        self.assertEqual(_frontmatter(self.skill)["metadata"]["version"], "3.0.0")
         marketplace = json.loads(MARKETPLACE.read_text())
         plugin_version = json.loads(PLUGIN.read_text())["version"]
         self.assertEqual(plugin_version, marketplace["metadata"]["version"])

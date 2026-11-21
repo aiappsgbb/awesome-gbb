@@ -11,7 +11,7 @@ upstream:
     .NET: [BREAKING] Graduate ToolApprovalAgent and add ToolAutoApprovalRuleContext (#7107)
   license: MIT
   notes: |
-    foundry-iq primarily wraps Azure AI Search Knowledge Base / agentic retrieval docs. The only GitHub upstream referenced by SKILL.md is microsoft/agent-framework for hosted-MCP behavior; validation also pins the Azure AI Search Python SDK.
+    foundry-iq-agent-integration primarily wraps Azure AI Search Knowledge Base / agentic retrieval docs. The only GitHub upstream referenced by SKILL.md is microsoft/agent-framework for hosted-MCP behavior; validation also pins the Azure AI Search Python SDK.
 packages:
   - name: azure-search-documents
     source: pypi
@@ -41,7 +41,7 @@ validation:
 
     PINNED_SHA="${PINNED_SHA:-b3f2e5392350d32835a40455d5069c18cac47a97}"
     PINNED_VERSION="${PINNED_VERSION:-12.1.0}"
-    WORK=".upstream-pin-smoke/foundry-iq"
+    WORK=".upstream-pin-smoke/foundry-iq-agent-integration"
 
     rm -rf "$WORK"
     mkdir -p "$WORK"
@@ -123,9 +123,9 @@ field_test_scope: github_pypi_docs_live_search_rest
 known_issues_count: 0
 ---
 
-# Upstream pin — `foundry-iq` skill
+# Upstream pin — `foundry-iq-agent-integration` skill
 
-This file is the **machine-readable validation contract** for the `foundry-iq`
+This file is the **machine-readable validation contract** for the `foundry-iq-agent-integration`
 skill. The YAML front-matter above is parsed by `scripts/check-freshness.py`
 weekly; the prose below is the human audit trail. Keep them in sync.
 
@@ -171,7 +171,7 @@ set -euo pipefail
 
 PINNED_SHA="${PINNED_SHA:-b3f2e5392350d32835a40455d5069c18cac47a97}"
 PINNED_VERSION="${PINNED_VERSION:-12.1.0}"
-WORK=".upstream-pin-smoke/foundry-iq"
+WORK=".upstream-pin-smoke/foundry-iq-agent-integration"
 
 rm -rf "$WORK"
 mkdir -p "$WORK"
@@ -266,7 +266,7 @@ echo "Foundry IQ docs link check ok"
 | Live Azure AI Search + Agent Service | ✅ | On `2026-10-01`: index, `searchIndex` KS and `low` KB PUT returned `201`; `low` retrieve returned `200` with `modelQueryPlanning`; a prompt agent with a `RemoteTool` connection answered through `knowledge_base_retrieve` (`2026-11-01-preview`); every UUID-scoped object deleted (`204`/`200`) |
 
 Captured at `last_validated: 2026-11-20` via the executable
-pin contract plus the `foundry-iq` Copilot-CLI fixture contract against a
+pin contract plus the `foundry-iq-agent-integration` Copilot-CLI fixture contract against a
 real keyless Azure AI Search service.
 
 ---

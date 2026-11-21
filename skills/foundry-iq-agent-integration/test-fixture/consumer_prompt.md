@@ -1,4 +1,4 @@
-# Goal — `foundry-iq` GA knowledge base + Agent Service smoke
+# Goal — `foundry-iq-agent-integration` GA knowledge base + Agent Service smoke
 
 Prove the Foundry IQ GA contract against the standing CI Azure AI Search
 service. Create a UUID-suffixed index, a `searchIndex` knowledge source and a
@@ -27,7 +27,7 @@ command. Do not combine it with Step 0 or any later work; the standalone
 output is required by the workflow audit.
 
 ```bash
-echo "skills/foundry-iq/SKILL.md"
+echo "skills/foundry-iq-agent-integration/SKILL.md"
 ```
 
 Wait for that tool call to finish before proceeding.
@@ -70,7 +70,7 @@ Run this exact command from the repository root. Do not copy, inline, or
 rewrite the script; its path is required audit evidence.
 
 ```bash
-python3 skills/foundry-iq/test-fixture/live_smoke.py
+python3 skills/foundry-iq-agent-integration/test-fixture/live_smoke.py
 ```
 
 The script uses Entra authentication and Resource Graph discovery. It
@@ -83,7 +83,7 @@ GA on `2026-10-01`, while remote SharePoint, Fabric Data Agent, Fabric
 Ontology, MCP server, and Work IQ are preview-only.
 
 Success requires exit code 0, output containing
-`foundry-iq-ga-kb-agent-ok`, and `/tmp/foundry-iq-smoke-evidence` showing:
+`foundry-iq-ga-kb-agent-ok`, and `/tmp/foundry-iq-agent-integration-smoke-evidence` showing:
 
 - `search_api_version` is exactly `2026-10-01`
 - `retrieve_activity_types` contains `modelQueryPlanning`
@@ -106,13 +106,13 @@ contract above.
 After Step 2 succeeds, your final action is:
 
 ```bash
-printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-iq-smoke-result
+printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-iq-agent-integration-smoke-result
 ```
 
 On any earlier failure:
 
 ```bash
-printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-iq-smoke-result
+printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-iq-agent-integration-smoke-result
 ```
 
 The marker file is authoritative. Do not emit the marker token elsewhere.

@@ -29,7 +29,7 @@ from azure.identity import DefaultAzureCredential
 SEARCH_API = "2026-10-01"
 MCP_API = "2026-11-01-preview"
 CONNECTION_API = "2025-10-01-preview"
-EVIDENCE_PATH = "/tmp/foundry-iq-smoke-evidence"
+EVIDENCE_PATH = "/tmp/foundry-iq-agent-integration-smoke-evidence"
 ARM = "https://management.azure.com"
 SEARCH_DELETE_OK = (204, 404)
 CONTROL_DELETE_OK = (200, 202, 204, 404)
