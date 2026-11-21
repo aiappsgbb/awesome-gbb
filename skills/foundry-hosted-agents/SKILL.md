@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "3.1.0"
+  version: "3.1.1"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -992,7 +992,7 @@ process repo should ship `tests/probe_mcp_output.py` for this.
 > On hosted agents the symptom is every Responses request returning
 > `server_error` with no useful log signal. **Use `httpx.AsyncClient(auth=httpx.Auth)`
 > via `http_client=` instead** (companion example below) — see
-> `foundry-iq` SKILL § "KB access from a hosted MAF agent — three
+> `foundry-iq-agent-integration` SKILL § "KB access from a hosted MAF agent — three
 > routes" → Route B for the canonical pattern.
 
 For MCP servers backed by Azure services that authenticate with

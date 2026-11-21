@@ -14,7 +14,7 @@ agent had batched every fixture step into a single 188-line Bash block,
 so the Step -1 breadcrumb was swallowed inside the truncated region and
 never reached the transcript text the audit greps.
 
-The proven fix (``foundry-iq``, green on six consecutive main runs) is to
+The proven fix (``foundry-iq-agent-integration``, formerly ``foundry-iq``, green on six consecutive main runs) is to
 require the breadcrumb be its OWN Bash tool call containing ONLY that
 command, so its full body always renders inside the untruncated head.
 
@@ -86,7 +86,7 @@ class FixtureAuditBreadcrumbContract(unittest.TestCase):
         """The prose must forbid batching it with later steps.
 
         This is the instruction that was MISSING on run 31812164018 and
-        is present in the green ``foundry-iq`` fixture.
+        is present in the green ``foundry-iq-agent-integration`` fixture.
         """
         prose = self.text.split("```bash")[0]
         self.assertRegex(
