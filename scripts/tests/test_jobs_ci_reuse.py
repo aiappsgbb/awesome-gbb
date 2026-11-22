@@ -365,6 +365,42 @@ class JobsReuseTests(unittest.TestCase):
                 reuse.cleanup_image(self.config, receipt)
             cli.assert_not_called()
 
+    def test_record_image_reads_tags_from_the_manifest_not_the_tag_object(self):
+        # az 2.86: `--name repo:tag` returns the tag object; `repo@digest` has `tags` (#488).
+        digest = "sha256:" + "c" * 64
+        tag_object = {"name": "run", "digest": digest, "createdTime": "2026-01-01T00:05:00Z"}
+        manifest = {"digest": digest, "tags": ["run"]}
+        def cli(config, args, **kwargs):
+            return tag_object if args[-1].endswith(":run") else manifest if args[-1].endswith("@" + digest) else None
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "ci-run-owned.json").write_text(json.dumps(self.manifest()))
+            with patch.object(reuse, "cli", side_effect=cli):
+                reuse.record_image(project, self.config)
+            self.assertEqual(json.loads((project / "ci-image.json").read_text())["digest"], digest)
+
+    def test_cleanup_retries_transient_delete_and_names_the_error_code(self):
+        failure = SimpleNamespace(returncode=1, stdout="", stderr='ERROR: Conflict({"error":{"code":"ContainerAppOperationInProgress","message":"x"}})')
+        with patch.object(reuse.subprocess, "run", return_value=failure), \
+                self.assertRaisesRegex(reuse.ReuseError, "^AZURE_READ_OR_OPERATION_FAILED:ContainerAppOperationInProgress$"):
+            reuse.cli(self.config, ["rest", "--method", "delete"])
+        target = reuse.owned(self.config)["job"][0]
+        current = {"id": target, "systemData": {"createdAt": "2026-01-01T00:05:00"},
+                   "identity": {"userAssignedIdentities": {self.config["worker_identity"]: {}}},
+                   "properties": {"environmentId": self.config["environment"]}}
+        state = {"present": True, "deletes": 0}
+        def get(config, rid, version, **kwargs):
+            return current if rid == target and state["present"] else None
+        def cli(config, args, **kwargs):
+            state["deletes"] += 1
+            if state["deletes"] == 1:
+                raise reuse.ReuseError("AZURE_READ_OR_OPERATION_FAILED:ContainerAppOperationInProgress")
+            state["present"] = False
+        with patch.object(reuse, "get", side_effect=get), patch.object(reuse, "cli", side_effect=cli), \
+                patch.object(reuse.time, "sleep"):
+            reuse.cleanup(self.config, self.manifest(), {"job": {"id": target, "created_at": "2026-01-01T00:05:00"}})
+        self.assertEqual(state["deletes"], 2)
+
     def test_fixture_invoke_does_not_replay_after_malformed_accepted_response(self):
         calls = []
         def respond(request):

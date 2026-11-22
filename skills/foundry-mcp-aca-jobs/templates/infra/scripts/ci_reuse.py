@@ -148,7 +148,9 @@ def cli(config, args, *, absent=False):
     if result.returncode:
         if absent and not_found(args, result.stderr):
             return None
-        raise ReuseError("AZURE_READ_OR_OPERATION_FAILED")
+        # Surface only the Azure error code, never the message or IDs.
+        code = re.search(r'"code"\s*:\s*"([A-Za-z]+)"|\(([A-Za-z]+)\)', result.stderr)
+        raise ReuseError("AZURE_READ_OR_OPERATION_FAILED" + (":" + (code.group(1) or code.group(2)) if code else ""))
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
@@ -372,8 +374,14 @@ def image_repository(config, hosted=False):
 
 
 def image_metadata(config, *, absent=False, hosted=False):
-    return cli(config, ["acr", "manifest", "show-metadata", "--registry",
-                       config["registry"].rsplit("/", 1)[1], "--name", image_repository(config, hosted) + ":run"], absent=absent)
+    # A tag lookup returns the tag object (no `tags`); re-read the manifest by digest.
+    registry, repository = config["registry"].rsplit("/", 1)[1], image_repository(config, hosted)
+    tag = cli(config, ["acr", "manifest", "show-metadata", "--registry", registry, "--name", repository + ":run"], absent=absent)
+    if tag is None:
+        return None
+    require(isinstance(tag, dict) and re.fullmatch(r"sha256:[0-9a-f]{64}", tag.get("digest", "")), "IMAGE_RECEIPT")
+    return cli(config, ["acr", "manifest", "show-metadata", "--registry", registry,
+                        "--name", repository + "@" + tag["digest"]], absent=absent)
 
 
 def record_image(project, config, *, hosted=False):
@@ -447,9 +455,17 @@ def cleanup(config, manifest, created):
             require(any(same(key, identity) for key in assigned), "CLEANUP_IDENTITY_MISMATCH")
             props = current["properties"]
             require(same(props.get("environmentId") or props.get("managedEnvironmentId"), config["environment"]), "CLEANUP_ENVIRONMENT_MISMATCH")
-        cli(config, ["rest", "--method", "delete", "--url",
-                     f"https://management.azure.com{resource_id}?api-version={version}"])
-        for _ in range(12):
+        # DELETE is idempotent; retry briefly while a deploy-time update settles.
+        for attempt in range(6):
+            try:
+                cli(config, ["rest", "--method", "delete", "--url",
+                             f"https://management.azure.com{resource_id}?api-version={version}"])
+                break
+            except ReuseError:
+                if attempt == 5 or get(config, resource_id, version, absent=True) is None:
+                    raise
+                time.sleep(10)
+        for _ in range(36):
             if get(config, resource_id, version, absent=True) is None:
                 break
             time.sleep(5)
