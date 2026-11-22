@@ -321,7 +321,10 @@ def prepare(project, config):
     azure_yaml = project / "azure.yaml"
     manifest = azure_yaml.read_text()
     anchor = "      context: .\n"
-    require(manifest.count(anchor) == 1, "CANONICAL_AZD_SERVICE_SHAPE")
+    host = "    host: containerapp\n"
+    require(manifest.count(anchor) == 1 and manifest.count(host) == 1, "CANONICAL_AZD_SERVICE_SHAPE")
+    # Pin the run's app: tag discovery is ambiguous in a shared resource group.
+    manifest = manifest.replace(host, host + f"    resourceName: {owned(config)['app'][0].rsplit('/', 1)[1]}\n")
     # ACR remote build: azd 1.34 packages concurrently with preprovision, and a
     # local runner build rewrote the azd env while the hook read it (#488).
     azure_yaml.write_text(manifest.replace(anchor, anchor +

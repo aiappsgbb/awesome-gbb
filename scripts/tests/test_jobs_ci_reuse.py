@@ -270,6 +270,7 @@ class JobsReuseTests(unittest.TestCase):
             self.assertIn("image: ci-smoke-mcp-jobs-abcdef12", yaml)
             self.assertIn("tag: run", yaml)
             self.assertIn("remoteBuild: true", yaml)
+            self.assertIn("    resourceName: ci-smoke-mcp-jobs-abcdef12\n", yaml)
             for name in (".dockerignore", ".azdignore"):
                 exclusion = (project / name).read_text()
                 self.assertTrue(exclusion.startswith("**\n"))
