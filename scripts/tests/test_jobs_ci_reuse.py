@@ -232,6 +232,29 @@ class JobsReuseTests(unittest.TestCase):
                 reuse.cleanup(self.config, self.manifest(), created)
             cli.assert_not_called()
 
+    def test_cleanup_matches_identity_key_case_insensitively(self):
+        # ARM returned `/resourcegroups/` for the user-assigned identity key (#488).
+        target = reuse.owned(self.config)["app"][0]
+        key = self.config["app_identity"].replace("/resourceGroups/", "/resourcegroups/")
+        current = {"id": target, "systemData": {"createdAt": "2026-01-01T00:05:00"},
+                   "identity": {"userAssignedIdentities": {key: {}}},
+                   "properties": {"managedEnvironmentId": self.config["environment"]}}
+        state = {"present": True}
+        def get(config, rid, version, **kwargs):
+            return current if rid == target and state["present"] else None
+        def cli(config, args, **kwargs):
+            state["present"] = False
+        created = {"app": {"id": target, "created_at": "2026-01-01T00:05:00"}}
+        with patch.object(reuse, "get", side_effect=get), patch.object(reuse, "cli", side_effect=cli) as delete:
+            reuse.cleanup(self.config, self.manifest(), created)
+        delete.assert_called_once()
+        current["identity"]["userAssignedIdentities"] = {key.replace("app-identity", "other"): {}}
+        state["present"] = True
+        with patch.object(reuse, "get", side_effect=get), patch.object(reuse, "cli") as delete, \
+                self.assertRaisesRegex(reuse.ReuseError, "CLEANUP_IDENTITY_MISMATCH"):
+            reuse.cleanup(self.config, self.manifest(), created)
+        delete.assert_not_called()
+
     def test_stage_selects_ci_entrypoint_without_modifying_normal_template(self):
         original = (TEMPLATE / "infra/main.bicep").read_bytes()
         with tempfile.TemporaryDirectory() as tmp:

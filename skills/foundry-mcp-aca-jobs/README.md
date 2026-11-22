@@ -44,12 +44,12 @@ Use this skill when the MCP server should stay responsive and an ACA Job should
 do the real work. The server handles Tasks, compatibility tools, callbacks, and
 state; the job handles execution and writes the durable result URL.
 
-ACA Easy Auth caller allowlisting has two mutually exclusive modes: client ID
-mode emits only `allowedApplications`, while principal object ID mode emits
-only `allowedPrincipals.identities`. Choose exactly one nonempty list because
-the `2025-01-01` authConfig API applies logical AND when both are present.
-Hosted agent instance callers use principal object ID mode; client ID mode
-remains supported for app-only callers.
+ACA Easy Auth caller allowlisting always emits `allowedApplications` from the
+required caller client IDs; optional principal object IDs add
+`allowedPrincipals.identities`, ANDed with it. Container Apps treats an omitted
+`allowedApplications` as `[]` and returns `403` for every caller, so a
+principal-only allowlist never works. Hosted agent callers are allowlisted by
+both their instance identity client ID and object ID.
 
 The CI fixture has an explicit **standing-resource reuse** path, separate from
 the normal subscription-scope consumer. `templates/infra/ci-reuse.bicep`

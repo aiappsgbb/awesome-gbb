@@ -12,6 +12,7 @@ param appClientId string
 param workerClientId string
 param workerPrincipalId string
 param callerPrincipalId string
+param callerClientId string
 param authClientId string
 param cosmosAccountName string
 param cosmosEndpoint string
@@ -101,6 +102,7 @@ module app 'app.bicep' = {
     uamiResourceId: appIdentityId
     acrServer: acrServer
     authClientId: authClientId
+    allowedMcpCallerClientIds: [callerClientId, workerClientId]
     allowedMcpCallerPrincipalIds: [callerPrincipalId, workerPrincipalId]
     tags: { 'ci-run-id': runId }
     environmentVariables: concat(commonEnv, [

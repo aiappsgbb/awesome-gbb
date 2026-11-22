@@ -306,7 +306,8 @@ def prepare(project, config):
         "acrServer": details["registry"]["loginServer"], "appIdentityId": config["app_identity"],
         "workerIdentityId": config["worker_identity"], "appClientId": details["app"]["clientId"],
         "workerClientId": details["worker"]["clientId"], "workerPrincipalId": details["worker"]["principalId"],
-        "callerPrincipalId": config["executor"], "authClientId": config["audience"],
+        "callerPrincipalId": config["executor"], "callerClientId": config["executor_client"],
+        "authClientId": config["audience"],
         "cosmosAccountName": config["cosmos"].rsplit("/", 1)[1], "cosmosEndpoint": config["cosmos_endpoint"],
         "cosmosDatabaseName": config["database"], "storageAccountName": config["storage"].rsplit("/", 1)[1],
         "storageAccountUrl": config["storage_endpoint"],
@@ -428,7 +429,9 @@ def cleanup(config, manifest, created):
         # deployed bindings; names alone do not justify deleting a shared object.
         if name in ("app", "job"):
             identity = config["app_identity" if name == "app" else "worker_identity"]
-            require(identity in (current.get("identity", {}).get("userAssignedIdentities") or {}), "CLEANUP_IDENTITY_MISMATCH")
+            # ARM may return the key as /resourcegroups/; ARM IDs compare case-insensitively.
+            assigned = (current.get("identity") or {}).get("userAssignedIdentities") or {}
+            require(any(same(key, identity) for key in assigned), "CLEANUP_IDENTITY_MISMATCH")
             props = current["properties"]
             require(same(props.get("environmentId") or props.get("managedEnvironmentId"), config["environment"]), "CLEANUP_ENVIRONMENT_MISMATCH")
         cli(config, ["rest", "--method", "delete", "--url",

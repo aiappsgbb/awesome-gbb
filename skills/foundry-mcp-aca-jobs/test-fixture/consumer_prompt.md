@@ -196,6 +196,7 @@ MCP_ACA_JOBS_COSMOS_DATABASE="$MCP_ACA_JOBS_COSMOS_DATABASE"
 MCP_ACA_JOBS_COSMOS_CONTAINER="$MCP_ACA_JOBS_COSMOS_CONTAINER"
 MCP_AUTH_APP_CLIENT_ID="$MCP_AUTH_APP_CLIENT_ID"
 MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$MCP_ACA_JOBS_CALLER_PRINCIPAL_ID"
+MCP_ACA_JOBS_CALLER_CLIENT_ID="$AZURE_CLIENT_ID"
 FOUNDRY_PROJECT_ENDPOINT="$FOUNDRY_PROJECT_ENDPOINT"
 AZURE_AI_PROJECT_ID="$AZURE_AI_PROJECT_ID"
 AZURE_AI_MODEL_DEPLOYMENT_NAME="$FOUNDRY_MODEL_DEPLOYMENT"
@@ -735,6 +736,7 @@ PY
 ) || fail "hosted agent did not become active"
 
 HOSTED_PRINCIPAL_ID=""
+HOSTED_CLIENT_ID=""
 HOSTED_IDENTITY_LAST_ERROR="hosted agent principal ID was empty"
 for attempt in $(seq 1 6); do
   HOSTED_IDENTITY_RESPONSE=""
@@ -756,9 +758,19 @@ for attempt in $(seq 1 6); do
       ' <<<"$HOSTED_IDENTITY_RESPONSE"
     )"
     then
-      break
+      # Easy Auth also checks the token azp; ACA denies an empty allowedApplications.
+      HOSTED_CLIENT_ID="$(
+        jq -er '
+          [
+            .instance_identity.client_id?,
+            .versions.latest.instance_identity.client_id?
+          ]
+          | map(select(type == "string" and length > 0))
+          | first // empty
+        ' <<<"$HOSTED_IDENTITY_RESPONSE"
+      )" && break
     fi
-    HOSTED_IDENTITY_LAST_ERROR="hosted agent principal ID was empty in both supported response shapes"
+    HOSTED_IDENTITY_LAST_ERROR="hosted agent principal or client ID was empty in both supported response shapes"
   else
     HOSTED_IDENTITY_LAST_ERROR="$(
       printf '%s\n' "$HOSTED_IDENTITY_RESPONSE" | tail -n 1
@@ -770,7 +782,7 @@ for attempt in $(seq 1 6); do
     sleep 10
   fi
 done
-test -n "$HOSTED_PRINCIPAL_ID" ||
+test -n "$HOSTED_PRINCIPAL_ID" && test -n "${HOSTED_CLIENT_ID:-}" ||
   fail "hosted agent identity lookup failed after 6 attempts: $HOSTED_IDENTITY_LAST_ERROR"
 
 AUTH_CONFIG_URL="https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${CHILD_RG}/providers/Microsoft.App/containerApps/${APP_NAME}/authConfigs/current?api-version=2025-01-01"
@@ -782,14 +794,21 @@ AUTH_CONFIG_PROPERTIES="$(
     --output json
 )" || fail "Easy Auth configuration read failed"
 UPDATED_AUTH_CONFIG_BODY="$(
-  jq -c --arg principal_id "$HOSTED_PRINCIPAL_ID" '
+  jq -c --arg principal_id "$HOSTED_PRINCIPAL_ID" --arg client_id "$HOSTED_CLIENT_ID" '
     (.identityProviders //= {})
     | (.identityProviders.azureActiveDirectory //= {})
     | (.identityProviders.azureActiveDirectory.validation //= {})
     | (.identityProviders.azureActiveDirectory.validation
         .defaultAuthorizationPolicy //= {})
-    | del(.identityProviders.azureActiveDirectory.validation
-        .defaultAuthorizationPolicy.allowedApplications)
+    | (.identityProviders.azureActiveDirectory.validation
+        .defaultAuthorizationPolicy.allowedApplications //= [])
+    | if (.identityProviders.azureActiveDirectory.validation
+        .defaultAuthorizationPolicy.allowedApplications
+        | index($client_id)) == null
+      then .identityProviders.azureActiveDirectory.validation
+        .defaultAuthorizationPolicy.allowedApplications += [$client_id]
+      else .
+      end
     | (.identityProviders.azureActiveDirectory.validation
         .defaultAuthorizationPolicy.allowedPrincipals //= {})
     | (.identityProviders.azureActiveDirectory.validation
@@ -803,7 +822,7 @@ UPDATED_AUTH_CONFIG_BODY="$(
       end
     | {properties: .}
   ' <<<"$AUTH_CONFIG_PROPERTIES"
-)" || fail "Easy Auth allowed principal identities update construction failed"
+)" || fail "Easy Auth caller allowlist update construction failed"
 az rest \
   --method put \
   --url "$AUTH_CONFIG_URL" \
@@ -821,8 +840,8 @@ for attempt in $(seq 1 12); do
       --query properties.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy \
       --output json
   )" || fail "Easy Auth allowed principal identities propagation poll failed"
-  if jq -e --arg principal_id "$HOSTED_PRINCIPAL_ID" \
-    '(.allowedApplications? == null) and
+  if jq -e --arg principal_id "$HOSTED_PRINCIPAL_ID" --arg client_id "$HOSTED_CLIENT_ID" \
+    '((.allowedApplications // []) | index($client_id) != null) and
      ((.allowedPrincipals.identities // []) | index($principal_id) != null)' \
     <<<"$CURRENT_AUTHORIZATION_POLICY" >/dev/null
   then
@@ -834,7 +853,7 @@ for attempt in $(seq 1 12); do
   fi
 done
 [[ "$AUTH_ALLOWLIST_CONVERGED" == true ]] ||
-  fail "hosted agent principal object ID missing from Easy Auth allowed principal identities after bounded poll"
+  fail "hosted agent client or principal ID missing from the Easy Auth caller allowlist after bounded poll"
 
 ACTIVE_REVISIONS=""
 for attempt in $(seq 1 6); do

@@ -22,10 +22,10 @@ param acrServer string
 @description('Entra app client ID used to validate bearer tokens at the edge.')
 param authClientId string
 
-@description('Allowed app-only caller client IDs for default authorization.')
+@description('Required caller client IDs (token azp/appid) for default authorization.')
 param allowedMcpCallerClientIds array = []
 
-@description('Allowed caller principal object IDs for default authorization.')
+@description('Optional caller principal object IDs (token oid); when set, ANDed with client IDs.')
 param allowedMcpCallerPrincipalIds array = []
 
 @description('azure.yaml service key used by azd to discover this Container App.')
@@ -38,7 +38,8 @@ param environmentVariables array = []
 param tags object = {}
 
 var authAudience = 'api://${authClientId}'
-assert exactlyOneMcpCallerAllowlistMode = (empty(allowedMcpCallerClientIds) && !empty(allowedMcpCallerPrincipalIds)) || (!empty(allowedMcpCallerClientIds) && empty(allowedMcpCallerPrincipalIds))
+// ACA stores an omitted allowedApplications as [], which denies every caller (#488).
+assert requireMcpCallerClientIds = !empty(allowedMcpCallerClientIds)
 assert nonemptyMcpCallerClientIds = empty(filter(allowedMcpCallerClientIds, id => empty(trim(id))))
 assert nonemptyMcpCallerPrincipalIds = empty(filter(allowedMcpCallerPrincipalIds, id => empty(trim(id))))
 
@@ -149,9 +150,10 @@ resource authConfig 'Microsoft.App/containerApps/authConfigs@2025-01-01' = {
             authAudience
             authClientId
           ]
-          defaultAuthorizationPolicy: !empty(allowedMcpCallerClientIds) ? {
+          defaultAuthorizationPolicy: empty(allowedMcpCallerPrincipalIds) ? {
             allowedApplications: allowedMcpCallerClientIds
           } : {
+            allowedApplications: allowedMcpCallerClientIds
             allowedPrincipals: {
               identities: allowedMcpCallerPrincipalIds
             }
