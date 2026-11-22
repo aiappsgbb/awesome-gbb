@@ -59,6 +59,24 @@ on_error() {
   exit "$status"
 }
 trap 'on_error "$LINENO"' ERR
+# Best-effort failure-path cleanup (Pattern 25): only the exact objects that
+# ci_reuse.py recorded as created by this run; the FAIL marker is unchanged.
+cleanup_on_failure() {
+  local status=$?
+  [[ "$status" -ne 0 && -n "${PROJECT_DIR:-}" && -f "$PROJECT_DIR/ci-run-owned.json" ]] || return 0
+  trap - ERR
+  set +e
+  local helper="$PROJECT_DIR/infra/scripts/ci_reuse.py"
+  [[ -f "$PROJECT_DIR/ci-created.json" ]] || python3 "$helper" record --project "$PROJECT_DIR"
+  if python3 "$helper" cleanup --project "$PROJECT_DIR" --execute; then
+    [[ ! -f "$PROJECT_DIR/ci-image.json" ]] ||
+      python3 "$helper" cleanup-image --project "$PROJECT_DIR" --execute
+    echo "NOTE failure-path run-owned cleanup attempted; see output above"
+  else
+    echo "NOTE failure-path cleanup incomplete; report run-owned residuals"
+  fi
+}
+trap cleanup_on_failure EXIT
 
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
 echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
