@@ -125,6 +125,20 @@ def settings(environ, run_id):
     return config
 
 
+# Exact not-found error codes only; generic HTTP 404, auth and transport stay unknown.
+# ARM: `Not Found({"error":{"code":"ResourceNotFound"...` (az rest), or `(ResourceNotFound)`.
+# Cosmos SQL child: `"code":"NotFound"`; blob container: `"code":"ContainerNotFound"`.
+ABSENT_CODES = r"ResourceNotFound|ResourceGroupNotFound|ContainerNotFound|NotFound"
+ACR_ABSENT = r"manifest unknown|name unknown|the specified tag does not exist"
+
+
+def not_found(args, stderr):
+    if re.search(r'"code"\s*:\s*"(' + ABSENT_CODES + r')"|\((' + ABSENT_CODES + r')\)', stderr):
+        return True
+    return args[:2] == ["acr", "manifest"] and re.search(
+        r"\b(MANIFEST_UNKNOWN|NAME_UNKNOWN)\b|" + ACR_ABSENT, stderr, re.IGNORECASE) is not None
+
+
 def cli(config, args, *, absent=False):
     command = ["az", *args, "--output", "json", "--only-show-errors"]
     if args[:2] != ["account", "show"]:
@@ -132,10 +146,7 @@ def cli(config, args, *, absent=False):
     result = subprocess.run(command,
                             capture_output=True, text=True, timeout=45)
     if result.returncode:
-        # Only exact resource-not-found is absence. Generic HTTP404/auth/transport is unknown.
-        if absent and re.search(r"\((ResourceNotFound|ResourceGroupNotFound)\)", result.stderr):
-            return None
-        if absent and args[:2] == ["acr", "manifest"] and re.search(r"\b(MANIFEST_UNKNOWN|NAME_UNKNOWN)\b", result.stderr):
+        if absent and not_found(args, result.stderr):
             return None
         raise ReuseError("AZURE_READ_OR_OPERATION_FAILED")
     return json.loads(result.stdout) if result.stdout.strip() else None
@@ -263,7 +274,7 @@ def owned(config):
     storage = config["storage"] + "/blobServices/default/containers/"
     return {
         "app": (group + "/providers/Microsoft.App/containerApps/ci-smoke-mcp-jobs-" + run, "2024-03-01"),
-        "job": (group + "/providers/Microsoft.App/jobs/ci-smoke-mcp-jobs-worker-" + run, "2026-01-01"),
+        "job": (group + "/providers/Microsoft.App/jobs/ci-smoke-mcp-jobs-w-" + run, "2026-01-01"),
         "control": (config["cosmos"] + "/sqlDatabases/" + config["database"] + "/containers/ci-smoke-mcp-jobs-task-" + run, "2024-11-15"),
         "output": (storage + "mcpjobs-" + run, "2023-01-01"),
         "callbacks": (storage + "mcpjobs-" + run + "-callbacks", "2023-01-01"),
@@ -360,6 +371,16 @@ def record_image(project, config, *, hosted=False):
               {"repository": image_repository(config, hosted), "digest": item["digest"]})
 
 
+# Cosmos SQL and blob containers return no ARM systemData.
+NO_SYSTEM_DATA = {"control", "output", "callbacks"}
+
+
+def utc(stamp):
+    # Microsoft.App systemData.createdAt is UTC but may omit the offset.
+    parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 def record_created(project, config):
     manifest = load(project / "ci-run-owned.json")
     cleanup_plan(config, manifest)
@@ -371,8 +392,11 @@ def record_created(project, config):
         require(same(item.get("id"), resource_id), "CREATED_TARGET_MISMATCH")
         started = datetime.fromisoformat(manifest["observed_at"])
         stamp = (item.get("systemData") or {}).get("createdAt")
-        require(isinstance(stamp, str) and datetime.fromisoformat(stamp.replace("Z", "+00:00")) >= started,
-                "CREATION_OWNERSHIP_UNVERIFIED")
+        if name in NO_SYSTEM_DATA and stamp is None:
+            # Ownership rests on the recorded pre-write absence of this run-scoped name.
+            created[name] = {"id": resource_id, "created_at": None}
+            continue
+        require(isinstance(stamp, str) and utc(stamp) >= started, "CREATION_OWNERSHIP_UNVERIFIED")
         created[name] = {"id": resource_id, "created_at": stamp}
     write_new(project / "ci-created.json", created)
 

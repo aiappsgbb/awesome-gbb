@@ -143,6 +143,35 @@ class JobsReuseTests(unittest.TestCase):
         with self.assertRaisesRegex(reuse.ReuseError, "REGISTRY_CONTRACT"):
             reuse.validate(self.config, data)
 
+    def test_absence_recognizes_actual_cli_not_found_shapes_only(self):
+        # Stderr shapes observed from az 2.86 `--only-show-errors` (#488).
+        rest = ["rest", "--method", "get"]
+        manifest = ["acr", "manifest", "show-metadata"]
+        absent = [
+            (rest, 'ERROR: Not Found({"error":{"code":"ResourceNotFound","message":"The Resource was not found."}})'),
+            (rest, 'ERROR: NotFound({"code":"NotFound","message":"Message: {\\"Errors\\":[\\"Resource Not Found.\\"]}"})'),
+            (rest, 'ERROR: Not Found({"error":{"code":"ContainerNotFound","message":"The specified container does not exist."}})'),
+            (rest, "ERROR: (ResourceGroupNotFound) Resource group 'x' could not be found."),
+            (manifest, "ERROR: 2026-11-22 Error: the specified tag does not exist. Correlation ID: x."),
+            (manifest, "ERROR: 2026-11-22 Error: manifest unknown. Correlation ID: x."),
+        ]
+        unknown = [
+            (rest, 'ERROR: Forbidden({"error":{"code":"AuthorizationFailed","message":"no access"}})'),
+            (rest, "ERROR: Not Found(<html>404 Not Found</html>)"),
+            (rest, "ERROR: Connection aborted."),
+            (["acr", "repository", "list"], "ERROR: the specified tag does not exist."),
+        ]
+        for args, stderr in absent + unknown:
+            result = SimpleNamespace(returncode=1, stdout="", stderr=stderr)
+            with self.subTest(stderr=stderr), patch.object(reuse.subprocess, "run", return_value=result):
+                if (args, stderr) in absent:
+                    self.assertIsNone(reuse.cli(self.config, args, absent=True))
+                else:
+                    with self.assertRaisesRegex(reuse.ReuseError, "AZURE_READ_OR_OPERATION_FAILED"):
+                        reuse.cli(self.config, args, absent=True)
+                with self.assertRaisesRegex(reuse.ReuseError, "AZURE_READ_OR_OPERATION_FAILED"):
+                    reuse.cli(self.config, args)
+
     def test_preexisting_temp_resource_is_not_adopted(self):
         with patch.object(reuse, "observations", return_value=self.data), patch.object(reuse, "get", return_value={"id": "existing"}):
             with self.assertRaisesRegex(reuse.ReuseError, "RUN_TARGET_ALREADY_EXISTS"):
@@ -168,6 +197,28 @@ class JobsReuseTests(unittest.TestCase):
             bad["absent_before"]["app"] = self.config[key]
             with self.assertRaises(reuse.ReuseError):
                 reuse.cleanup_plan(self.config, bad)
+
+    def test_record_accepts_actual_arm_created_shapes(self):
+        # App/job createdAt omits the UTC offset; Cosmos/blob containers have no systemData (#488).
+        owned = reuse.owned(self.config)
+        shapes = {owned[k][0]: {"id": owned[k][0], "systemData": {"createdAt": "2026-01-01T00:05:00.1234567"}}
+                  for k in ("app", "job")}
+        shapes.update({owned[k][0]: {"id": owned[k][0], "systemData": None} for k in reuse.NO_SYSTEM_DATA})
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "ci-run-owned.json").write_text(json.dumps(self.manifest()))
+            with patch.object(reuse, "get", side_effect=lambda c, rid, v, **k: shapes[rid]):
+                reuse.record_created(project, self.config)
+            created = json.loads((project / "ci-created.json").read_text())
+        self.assertEqual(set(created), set(owned))
+        self.assertIsNone(created["output"]["created_at"])
+        early = {**shapes, owned["app"][0]: {"id": owned["app"][0], "systemData": {"createdAt": "2025-12-31T23:59:59"}}}
+        for bad in (early, {**shapes, owned["job"][0]: {"id": owned["job"][0], "systemData": None}}):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(), \
+                    patch.object(reuse, "get", side_effect=lambda c, rid, v, **k: bad[rid]):
+                (Path(tmp) / "ci-run-owned.json").write_text(json.dumps(self.manifest()))
+                with self.assertRaisesRegex(reuse.ReuseError, "CREATION_OWNERSHIP_UNVERIFIED"):
+                    reuse.record_created(Path(tmp), self.config)
 
     def test_cleanup_rejects_unrecorded_or_replaced_objects_before_delete(self):
         with patch.object(reuse, "get", return_value={"id": "not-recorded"}), patch.object(reuse, "cli") as cli:

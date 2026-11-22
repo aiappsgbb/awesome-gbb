@@ -21,7 +21,7 @@ param storageAccountUrl string
 param imageDigest string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld@sha256:e9b3e7c34664c7cffd7144864b0e4eec369bfde80068f9095dc63b37058bec48'
 
 var appName = 'ci-smoke-mcp-jobs-${runId}'
-var jobName = 'ci-smoke-mcp-jobs-worker-${runId}'
+var jobName = 'ci-smoke-mcp-jobs-w-${runId}' // ACA names are 2-32 chars
 var controlContainer = 'ci-smoke-mcp-jobs-task-${runId}'
 var outputContainer = 'mcpjobs-${runId}'
 var callbackContainer = '${outputContainer}-callbacks'
