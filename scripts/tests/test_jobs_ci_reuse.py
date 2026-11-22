@@ -152,6 +152,7 @@ class JobsReuseTests(unittest.TestCase):
             (rest, 'ERROR: NotFound({"code":"NotFound","message":"Message: {\\"Errors\\":[\\"Resource Not Found.\\"]}"})'),
             (rest, 'ERROR: Not Found({"error":{"code":"ContainerNotFound","message":"The specified container does not exist."}})'),
             (rest, "ERROR: (ResourceGroupNotFound) Resource group 'x' could not be found."),
+            (rest, 'ERROR: Not Found({"error":{"code":"ContainerAppsJobNotFound","message":"x"}})'),
             (manifest, "ERROR: 2026-11-22 Error: the specified tag does not exist. Correlation ID: x."),
             (manifest, "ERROR: 2026-11-22 Error: manifest unknown. Correlation ID: x."),
         ]

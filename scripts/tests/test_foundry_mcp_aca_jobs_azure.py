@@ -485,8 +485,11 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(template.containers[0].command, ["sh", "-c", "echo sidecar"])
         self.assertEqual(template.containers[0].args, ["--sidecar", "value"])
         self.assertEqual(template.containers[1].name, policy.container_name)
-        self.assertEqual(template.init_containers, original_job.properties.template.init_containers)
-        self.assertEqual(template.volumes, original_job.properties.template.volumes)
+        # #488: begin_start rejects JobTemplate.volumes; send only the execution shape.
+        from azure.mgmt.appcontainers.models import JobExecutionTemplate
+        self.assertIsInstance(template, JobExecutionTemplate)
+        self.assertNotIn("volumes", template.as_dict())
+        self.assertEqual(set(template.containers[1].as_dict()) - {"name", "image", "command", "args", "env", "resources"}, set())
         self.assertNotIn("inputRef", str(template))
         self.assertNotIn("callback", str(template))
         self.assertEqual(execution.execution_id, "execution-123")
