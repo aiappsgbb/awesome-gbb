@@ -44,7 +44,12 @@ abort; explicit preconditions write a more precise FAIL marker.
 ```bash
 set -Eeuo pipefail
 MARKER=/tmp/foundry-mcp-aca-jobs-smoke-result
+EVIDENCE=/tmp/foundry-mcp-aca-jobs-smoke-evidence
 rm -f "$MARKER"
+# Diagnostics for the uploaded evidence file; tokens never reach it.
+redact() {
+  sed -E 's/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/<redacted-jwt>/g; s/([Bb]earer)[[:space:]]+[^[:space:]]+/\1 <redacted>/g'
+}
 
 fail() {
   printf 'SMOKE_RESULT=FAIL %s\n' "$1" > "$MARKER"
@@ -66,6 +71,16 @@ cleanup_on_failure() {
   [[ "$status" -ne 0 && -n "${PROJECT_DIR:-}" && -f "$PROJECT_DIR/ci-run-owned.json" ]] || return 0
   trap - ERR
   set +e
+  if [[ -n "${APP_NAME:-}" && -n "${CHILD_RG:-}" ]]; then
+    {
+      echo "== app console (tail) =="
+      timeout 90 az containerapp logs show --resource-group "$CHILD_RG" --name "$APP_NAME" \
+        --tail 200 --format text 2>&1 | grep -v "GET /health"
+      echo "== job executions =="
+      timeout 60 az containerapp job execution list --resource-group "$CHILD_RG" \
+        --name "$JOB_NAME" --output table 2>&1
+    } | redact >> "$EVIDENCE"
+  fi
   local helper="$PROJECT_DIR/infra/scripts/ci_reuse.py"
   [[ -f "$PROJECT_DIR/ci-created.json" ]] || python3 "$helper" record --project "$PROJECT_DIR"
   if python3 "$helper" cleanup --project "$PROJECT_DIR" --execute; then
@@ -474,7 +489,7 @@ async def main():
 
 asyncio.run(main())
 PY
-)
+) 2>&1 | redact | tee -a "$EVIDENCE"
 
 ## Step 5 — prompt agent smoke
 
@@ -574,7 +589,7 @@ finally:
     project.close()
     credential.close()
 PY
-)
+) 2>&1 | redact | tee -a "$EVIDENCE"
 
 ## Step 6 — hosted agent smoke
 
@@ -992,7 +1007,7 @@ project.close()
 credential.close()
 print("HOSTED_AGENT_MCP_CALLS_VALID")
 PY
-)
+) 2>&1 | redact | tee -a "$EVIDENCE"
 
 ## Step 7 — targeted run-owned cleanup
 

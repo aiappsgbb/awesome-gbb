@@ -128,8 +128,9 @@ def settings(environ, run_id):
 # Exact not-found error codes only; generic HTTP 404, auth and transport stay unknown.
 # ARM: `Not Found({"error":{"code":"ResourceNotFound"...` (az rest), or `(ResourceNotFound)`.
 # Cosmos SQL child: `"code":"NotFound"`; blob container: `"code":"ContainerNotFound"`;
-# ACA job just after delete: `"code":"ContainerAppsJobNotFound"`.
-ABSENT_CODES = r"ResourceNotFound|ResourceGroupNotFound|ContainerNotFound|ContainerAppsJobNotFound|NotFound"
+# ACA app/job just after delete: `ContainerAppNotFound` / `ContainerAppsJobNotFound`.
+ABSENT_CODES = (r"ResourceNotFound|ResourceGroupNotFound|ContainerNotFound|ContainerAppsJobNotFound|"
+                r"ContainerAppNotFound|NotFound")
 ACR_ABSENT = r"manifest unknown|name unknown|the specified tag does not exist"
 
 
