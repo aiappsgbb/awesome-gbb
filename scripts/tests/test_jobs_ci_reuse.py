@@ -269,6 +269,7 @@ class JobsReuseTests(unittest.TestCase):
             self.assertIn("registry: ciregistry.azurecr.io", yaml)
             self.assertIn("image: ci-smoke-mcp-jobs-abcdef12", yaml)
             self.assertIn("tag: run", yaml)
+            self.assertIn("remoteBuild: true", yaml)
             for name in (".dockerignore", ".azdignore"):
                 exclusion = (project / name).read_text()
                 self.assertTrue(exclusion.startswith("**\n"))
@@ -282,9 +283,15 @@ class JobsReuseTests(unittest.TestCase):
                    "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL": self.config["storage_endpoint"]}
             with patch.object(reuse.subprocess, "run", return_value=SimpleNamespace(stdout=json.dumps(azd))):
                 reuse.check_staged_target(project, self.config)
+            # A concurrent azd env rewrite that settles is re-read, not adopted blindly.
+            partial = SimpleNamespace(stdout=json.dumps({"AZURE_ENV_NAME": "x"}))
+            with patch.object(reuse.subprocess, "run", side_effect=[partial, SimpleNamespace(stdout=json.dumps(azd))]), \
+                    patch.object(reuse.time, "sleep"):
+                reuse.check_staged_target(project, self.config)
             azd["AZURE_RESOURCE_GROUP"] = "wrong-group"
-            with patch.object(reuse.subprocess, "run", return_value=SimpleNamespace(stdout=json.dumps(azd))):
-                with self.assertRaisesRegex(reuse.ReuseError, "AZD_TARGET_DRIFT"):
+            with patch.object(reuse.subprocess, "run", return_value=SimpleNamespace(stdout=json.dumps(azd))), \
+                    patch.object(reuse.time, "sleep"):
+                with self.assertRaisesRegex(reuse.ReuseError, "^AZD_TARGET_DRIFT:AZURE_RESOURCE_GROUP$"):
                     reuse.check_staged_target(project, self.config)
             with self.assertRaises(FileExistsError), patch.object(reuse, "check", return_value=reuse.validate(self.config, self.data)):
                 reuse.prepare(project, self.config)

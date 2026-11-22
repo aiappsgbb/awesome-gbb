@@ -322,7 +322,10 @@ def prepare(project, config):
     manifest = azure_yaml.read_text()
     anchor = "      context: .\n"
     require(manifest.count(anchor) == 1, "CANONICAL_AZD_SERVICE_SHAPE")
+    # ACR remote build: azd 1.34 packages concurrently with preprovision, and a
+    # local runner build rewrote the azd env while the hook read it (#488).
     azure_yaml.write_text(manifest.replace(anchor, anchor +
+        "      remoteBuild: true\n"
         f"      registry: {config['registry_host']}\n"
         f"      image: {image_repository(config)}\n"
         "      tag: run\n"))
@@ -344,10 +347,17 @@ def check_staged_target(project, config):
         "MCP_ACA_JOBS_COSMOS_ENDPOINT": config["cosmos_endpoint"],
         "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL": config["storage_endpoint"],
     }
-    result = subprocess.run(["azd", "env", "get-values", "--output", "json"], cwd=project,
-                            capture_output=True, text=True, timeout=30, check=True)
-    actual = json.loads(result.stdout, object_pairs_hook=unique)
-    require(isinstance(actual, dict) and all(actual.get(k) == v for k, v in expected.items()), "AZD_TARGET_DRIFT")
+    for attempt in range(3):
+        result = subprocess.run(["azd", "env", "get-values", "--output", "json"], cwd=project,
+                                capture_output=True, text=True, timeout=30, check=True)
+        actual = json.loads(result.stdout, object_pairs_hook=unique)
+        require(isinstance(actual, dict), "AZD_TARGET_DRIFT")
+        drift = sorted(k for k, v in expected.items() if actual.get(k) != v)
+        if not drift:
+            break
+        time.sleep(2)
+    # Key names only; values stay out of logs.
+    require(not drift, "AZD_TARGET_DRIFT:" + ",".join(drift))
     hashes = load(project / "ci-stage.json")
     require(set(hashes) == {"infra/main.bicep", "infra/main.parameters.json"}, "STAGED_GRAPH_DRIFT")
     require(all(hashlib.sha256((project / name).read_bytes()).hexdigest() == digest
