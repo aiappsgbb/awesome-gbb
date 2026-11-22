@@ -131,6 +131,18 @@ class JobsReuseTests(unittest.TestCase):
             with self.subTest(mutate=mutate), self.assertRaises(reuse.ReuseError):
                 reuse.validate(self.config, data)
 
+    def test_registry_read_uses_api_version_that_returns_role_assignment_mode(self):
+        # 2023-07-01 omits roleAssignmentMode, so the contract always failed (#488).
+        calls = []
+        with patch.object(reuse, "get", side_effect=lambda c, rid, v, **k: calls.append((rid, v)) or {}), \
+                patch.object(reuse, "cli", side_effect=reuse.ReuseError("STOP")), self.assertRaises(reuse.ReuseError):
+            reuse.observations(self.config)
+        self.assertIn((self.config["registry"], "2025-11-01"), calls)
+        data = copy.deepcopy(self.data)
+        del data["registry"]["properties"]["roleAssignmentMode"]
+        with self.assertRaisesRegex(reuse.ReuseError, "REGISTRY_CONTRACT"):
+            reuse.validate(self.config, data)
+
     def test_preexisting_temp_resource_is_not_adopted(self):
         with patch.object(reuse, "observations", return_value=self.data), patch.object(reuse, "get", return_value={"id": "existing"}):
             with self.assertRaisesRegex(reuse.ReuseError, "RUN_TARGET_ALREADY_EXISTS"):
