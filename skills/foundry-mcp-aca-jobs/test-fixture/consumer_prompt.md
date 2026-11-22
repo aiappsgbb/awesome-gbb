@@ -37,7 +37,12 @@ The workflow has installed `az`, `azd`, `uv`, `curl`, `jq`, `python3`, and
 `uuidgen`. Never install tools or search for binaries. CI grades only
 `/tmp/foundry-mcp-aca-jobs-smoke-result`, not assistant prose.
 
-Run every remaining step in one Bash action using the exact block below.
+Run every remaining step as one script. With the file-creation tool, write the
+exact block below, byte for byte, to `.scratch/foundry-mcp-aca-jobs-smoke.sh` in
+the workspace, then make exactly one Bash call: `bash .scratch/foundry-mcp-aca-jobs-smoke.sh`.
+Do not paste the block into the shell tool: unattended runs deny long inline
+commands that the permission check cannot approve. Do not split, edit, chunk,
+retry parts of, or delegate the script; when it exits, the marker is the result.
 The `ERR` trap writes a deterministic FAIL marker for any unhandled hard
 abort; explicit preconditions write a more precise FAIL marker.
 
