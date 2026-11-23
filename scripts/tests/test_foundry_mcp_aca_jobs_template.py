@@ -62,6 +62,9 @@ class JobsFixtureStabilityTests(unittest.TestCase):
         self.assertIn("SMOKE_RESULT=FAIL internal deadline", self.script)
         self.assertIn("trap 'exit 143' TERM", self.script)
 
+    def test_failure_path_publishes_invoke_custody_records(self):
+        self.assertIn('for record in "$PROJECT_DIR"/ci-*-operation.jsonl; do', self.script)
+
     def test_hosted_deploy_retry_is_bounded_and_404_only(self):
         self.assertIn("for attempt in 1 2 3; do", self.script)
         self.assertIn("grep -Eq '\\b404\\b|NotFound|Not Found'", self.script)

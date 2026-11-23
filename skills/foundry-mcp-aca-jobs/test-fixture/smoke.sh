@@ -55,6 +55,12 @@ cleanup_on_failure() {
         --name "$JOB_NAME" --output table 2>&1
     } | redact >> "$EVIDENCE"
   fi
+  # Invocation custody records hold only hashes, IDs and status codes; publish
+  # them so an unresolved invoke is diagnosable from the artifact.
+  for record in "$PROJECT_DIR"/ci-*-operation.jsonl; do
+    [[ -f "$record" ]] || continue
+    { echo "== $(basename "$record") =="; cat "$record"; } | redact >> "$EVIDENCE"
+  done
   local helper="$PROJECT_DIR/infra/scripts/ci_reuse.py"
   [[ -f "$PROJECT_DIR/ci-created.json" ]] || python3 "$helper" record --project "$PROJECT_DIR"
   if python3 "$helper" cleanup --project "$PROJECT_DIR" --execute; then
