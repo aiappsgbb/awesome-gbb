@@ -517,7 +517,7 @@ def invoke_once(client, kind, options):
                 raise ReuseError("INVOKE_OUTCOME_UNKNOWN_NO_REPLAY") from None
 
 
-INVOKE_RATE_LIMIT_ATTEMPTS = 3
+INVOKE_RATE_LIMIT_ATTEMPTS = 5
 
 
 def _retry_after_seconds(error, attempt):
