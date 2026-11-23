@@ -417,6 +417,43 @@ class JobsReuseTests(unittest.TestCase):
                 with self.subTest(file=name):
                     signature.bind(None, *["x"] * len(call.args), **{k.arg: "x" for k in call.keywords})
 
+    def _invoke_with(self, responses):
+        calls = []
+        def respond(request):
+            calls.append(request.method)
+            return responses[min(len(calls), len(responses)) - 1]
+        with httpx.Client(transport=httpx.MockTransport(respond)) as http:
+            client = OpenAI(api_key="offline-only", base_url="https://example.test/v1", http_client=http)
+            with patch.object(reuse.time, "sleep") as sleep:
+                try:
+                    return reuse.invoke_once(client, "prompt", {"input": "start"}), calls, sleep
+                except reuse.ReuseError as error:
+                    return error, calls, sleep
+
+    def test_fixture_invoke_replays_only_explicit_rate_limits_bounded(self):
+        limited = httpx.Response(429, json={"error": {"code": "rate_limit_exceeded", "message": "x"}},
+                                 headers={"retry-after": "7"})
+        bad = httpx.Response(400, json={"error": {"code": "tool_user_error", "message": "x"}})
+        with tempfile.TemporaryDirectory() as tmp, chdir(tmp):
+            error, calls, sleep = self._invoke_with([limited])
+            self.assertIsInstance(error, reuse.ReuseError)
+            self.assertEqual(calls, ["POST"] * reuse.INVOKE_RATE_LIMIT_ATTEMPTS)
+            sleep.assert_called_with(7.0)
+            events = [json.loads(line)["event"] for line in Path("ci-prompt-operation.jsonl").read_text().splitlines()]
+            self.assertEqual(events.count("rate-limited"), reuse.INVOKE_RATE_LIMIT_ATTEMPTS - 1)
+            self.assertEqual(events[-1], "unresolved")
+        ok = httpx.Response(200, json={"id": "resp_1", "object": "response", "status": "completed",
+                                       "output": [], "created_at": 0, "model": "m"},
+                            headers={"x-request-id": "request-ok"})
+        with tempfile.TemporaryDirectory() as tmp, chdir(tmp):
+            result, calls, _ = self._invoke_with([limited, ok])
+            self.assertNotIsInstance(result, reuse.ReuseError)
+            self.assertEqual(calls, ["POST", "POST"])
+        with tempfile.TemporaryDirectory() as tmp, chdir(tmp):
+            error, calls, _ = self._invoke_with([bad, limited])
+            self.assertIsInstance(error, reuse.ReuseError)
+            self.assertEqual(calls, ["POST"])
+
     def test_fixture_invoke_does_not_replay_after_malformed_accepted_response(self):
         calls = []
         def respond(request):

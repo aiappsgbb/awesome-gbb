@@ -499,13 +499,34 @@ def invoke_once(client, kind, options):
             output.flush()
             os.fsync(output.fileno())
         begin_operation(record, target=str(client.base_url), intent={"kind": kind, "options": options})
-        try:
-            bounded = client.with_options(max_retries=0, timeout=180)
-            raw = bounded.responses.with_raw_response.create(**options)
-            return capture_response(raw, record)
-        except Exception as error:
-            record("unresolved", error_metadata(error))
-            raise ReuseError("INVOKE_OUTCOME_UNKNOWN_NO_REPLAY") from None
+        bounded = client.with_options(max_retries=0, timeout=180)
+        for attempt in range(1, INVOKE_RATE_LIMIT_ATTEMPTS + 1):
+            try:
+                raw = bounded.responses.with_raw_response.create(**options)
+                return capture_response(raw, record)
+            except Exception as error:
+                # Only an explicit 429 is replayed, bounded: the service declined the
+                # request, and the prompt carries the same idempotencyKey, so the MCP
+                # start dedups even if a tool already ran (#488). Anything else is
+                # unresolved and never replayed.
+                if getattr(error, "status_code", None) == 429 and attempt < INVOKE_RATE_LIMIT_ATTEMPTS:
+                    record("rate-limited", {**error_metadata(error), "attempt": attempt})
+                    time.sleep(_retry_after_seconds(error, attempt))
+                    continue
+                record("unresolved", error_metadata(error))
+                raise ReuseError("INVOKE_OUTCOME_UNKNOWN_NO_REPLAY") from None
+
+
+INVOKE_RATE_LIMIT_ATTEMPTS = 3
+
+
+def _retry_after_seconds(error, attempt):
+    headers = getattr(getattr(error, "response", None), "headers", None) or {}
+    try:
+        seconds = float(headers.get("retry-after", ""))
+    except (TypeError, ValueError):
+        seconds = 20.0 * attempt
+    return max(1.0, min(seconds, 60.0))
 
 
 def main():
