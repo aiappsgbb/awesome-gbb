@@ -540,8 +540,10 @@ try:
                 "Then call get_aca_job_status with the returned taskId."
             ),
         })
-    except Exception:
-        # Diagnostics only (no replay): which MCP call failed and its public error.
+    except Exception as exc:
+        # Diagnostics only (no replay): the service error names the failing tool call.
+        cause = exc.__context__ or exc
+        print("PROMPT_INVOKE_ERROR", type(cause).__name__, redact_error(str(cause))[:800])
         try:
             for item in openai.conversations.items.list(conversation_id=conversation.id):
                 if getattr(item, "type", "") in ("mcp_call",):
