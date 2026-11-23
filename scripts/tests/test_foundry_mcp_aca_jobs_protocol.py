@@ -39,6 +39,7 @@ _STUBBED_MODULE_NAMES = (
     "azure.storage.blob.aio",
     "azure.mgmt",
     "azure.mgmt.appcontainers",
+    "azure.mgmt.appcontainers.models",
     "fastmcp",
     "fastmcp.server",
     "fastmcp.server.context",
@@ -272,6 +273,15 @@ def _install_stubs() -> None:
     azure_storage_blob_aio.ContainerClient = ContainerClient
     azure_storage_blob.ContainerClient = ContainerClient
     azure_appcontainers.ContainerAppsAPIClient = ContainerAppsAPIClient
+    azure_appcontainers_models = _ensure_package("azure.mgmt.appcontainers.models")
+
+    class _StubModel:
+        def __init__(self, **kwargs: Any) -> None:
+            self.__dict__.update(kwargs)
+
+    azure_appcontainers_models.JobExecutionContainer = type("JobExecutionContainer", (_StubModel,), {})
+    azure_appcontainers_models.JobExecutionTemplate = type("JobExecutionTemplate", (_StubModel,), {})
+    azure_appcontainers.models = azure_appcontainers_models
     azure.core = azure_core
     azure.identity = azure_identity
     azure.cosmos = azure_cosmos

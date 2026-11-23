@@ -14,6 +14,7 @@ from typing import Any, Literal, Mapping, Protocol, runtime_checkable
 
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.appcontainers import ContainerAppsAPIClient
+from azure.mgmt.appcontainers.models import JobExecutionContainer, JobExecutionTemplate
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .models import JobPolicy, PublicError
@@ -216,7 +217,16 @@ def _execution_from_response(
     )
 
 
-def _execution_template_for_start(job: Any, policy: JobPolicy, owner_scope: str, task_id: str) -> Any:
+# Start accepts only a JobExecutionTemplate; the job's own template also carries
+# `volumes`, which the API rejects ("Unknown properties volumes").
+_START_CONTAINER_FIELDS = ("name", "image", "command", "args", "env", "resources")
+
+
+def _start_container(container: Any) -> JobExecutionContainer:
+    return JobExecutionContainer(**{field: _raw_value(container, field) for field in _START_CONTAINER_FIELDS})
+
+
+def _execution_template_for_start(job: Any, policy: JobPolicy, owner_scope: str, task_id: str) -> JobExecutionTemplate:
     template = deepcopy(_raw_value(_raw_value(job, "properties", job), "template"))
     containers = _raw_value(template, "containers", []) or []
     if not containers:
@@ -232,7 +242,13 @@ def _execution_template_for_start(job: Any, policy: JobPolicy, owner_scope: str,
         first["args"] = ["--owner-scope", owner_scope, "--task-id", task_id]
     else:
         first.args = ["--owner-scope", owner_scope, "--task-id", task_id]
-    return template
+    init_containers = _raw_value(template, "init_containers", None)
+    if init_containers is None:
+        init_containers = _raw_value(template, "initContainers", None)
+    return JobExecutionTemplate(
+        containers=[_start_container(container) for container in containers],
+        init_containers=[_start_container(container) for container in init_containers or []] or None,
+    )
 
 
 def _start_execution_args(response: Any, policy: JobPolicy, owner_scope: str, task_id: str) -> list[str]:

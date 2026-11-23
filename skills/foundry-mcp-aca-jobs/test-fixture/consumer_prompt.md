@@ -37,14 +37,24 @@ The workflow has installed `az`, `azd`, `uv`, `curl`, `jq`, `python3`, and
 `uuidgen`. Never install tools or search for binaries. CI grades only
 `/tmp/foundry-mcp-aca-jobs-smoke-result`, not assistant prose.
 
-Run every remaining step in one Bash action using the exact block below.
+Run every remaining step as one script. With the file-creation tool, write the
+exact block below, byte for byte, to `.scratch/foundry-mcp-aca-jobs-smoke.sh` in
+the workspace, then make exactly one Bash call: `bash .scratch/foundry-mcp-aca-jobs-smoke.sh`.
+Do not paste the block into the shell tool: unattended runs deny long inline
+commands that the permission check cannot approve. Do not split, edit, chunk,
+retry parts of, or delegate the script; when it exits, the marker is the result.
 The `ERR` trap writes a deterministic FAIL marker for any unhandled hard
 abort; explicit preconditions write a more precise FAIL marker.
 
 ```bash
 set -Eeuo pipefail
 MARKER=/tmp/foundry-mcp-aca-jobs-smoke-result
+EVIDENCE=/tmp/foundry-mcp-aca-jobs-smoke-evidence
 rm -f "$MARKER"
+# Diagnostics for the uploaded evidence file; tokens never reach it.
+redact() {
+  sed -E 's/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/<redacted-jwt>/g; s/([Bb]earer)[[:space:]]+[^[:space:]]+/\1 <redacted>/g'
+}
 
 fail() {
   printf 'SMOKE_RESULT=FAIL %s\n' "$1" > "$MARKER"
@@ -59,6 +69,34 @@ on_error() {
   exit "$status"
 }
 trap 'on_error "$LINENO"' ERR
+# Best-effort failure-path cleanup (Pattern 25): only the exact objects that
+# ci_reuse.py recorded as created by this run; the FAIL marker is unchanged.
+cleanup_on_failure() {
+  local status=$?
+  [[ "$status" -ne 0 && -n "${PROJECT_DIR:-}" && -f "$PROJECT_DIR/ci-run-owned.json" ]] || return 0
+  trap - ERR
+  set +e
+  if [[ -n "${APP_NAME:-}" && -n "${CHILD_RG:-}" ]]; then
+    {
+      echo "== app console (tail) =="
+      timeout 90 az containerapp logs show --resource-group "$CHILD_RG" --name "$APP_NAME" \
+        --tail 200 --format text 2>&1 | grep -v "GET /health"
+      echo "== job executions =="
+      timeout 60 az containerapp job execution list --resource-group "$CHILD_RG" \
+        --name "$JOB_NAME" --output table 2>&1
+    } | redact >> "$EVIDENCE"
+  fi
+  local helper="$PROJECT_DIR/infra/scripts/ci_reuse.py"
+  [[ -f "$PROJECT_DIR/ci-created.json" ]] || python3 "$helper" record --project "$PROJECT_DIR"
+  if python3 "$helper" cleanup --project "$PROJECT_DIR" --execute; then
+    [[ ! -f "$PROJECT_DIR/ci-image.json" ]] ||
+      python3 "$helper" cleanup-image --project "$PROJECT_DIR" --execute
+    echo "NOTE failure-path run-owned cleanup attempted; see output above"
+  else
+    echo "NOTE failure-path cleanup incomplete; report run-owned residuals"
+  fi
+}
+trap cleanup_on_failure EXIT
 
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
 echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
@@ -118,7 +156,7 @@ PROJECT_DIR="$SCRATCH_ROOT/skills/foundry-mcp-aca-jobs/templates"
 CANONICAL_JOB_DIR="$SCRATCH_ROOT/skills/azd-patterns/references/bicep"
 AZD_ENV_NAME="ci-smoke-mcp-jobs-$SUFFIX"
 APP_NAME="ci-smoke-mcp-jobs-$SUFFIX"
-JOB_NAME="ci-smoke-mcp-jobs-worker-$SUFFIX"
+JOB_NAME="ci-smoke-mcp-jobs-w-$SUFFIX"
 HOSTED_NAME="ci-smoke-mcp-jobs-hosted-$SUFFIX"
 ACR_NAME="${ACR_LOGIN_SERVER%%.*}"
 export MCP_ACA_JOBS_CI_REUSE=existing
@@ -196,6 +234,7 @@ MCP_ACA_JOBS_COSMOS_DATABASE="$MCP_ACA_JOBS_COSMOS_DATABASE"
 MCP_ACA_JOBS_COSMOS_CONTAINER="$MCP_ACA_JOBS_COSMOS_CONTAINER"
 MCP_AUTH_APP_CLIENT_ID="$MCP_AUTH_APP_CLIENT_ID"
 MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$MCP_ACA_JOBS_CALLER_PRINCIPAL_ID"
+MCP_ACA_JOBS_CALLER_CLIENT_ID="$AZURE_CLIENT_ID"
 FOUNDRY_PROJECT_ENDPOINT="$FOUNDRY_PROJECT_ENDPOINT"
 AZURE_AI_PROJECT_ID="$AZURE_AI_PROJECT_ID"
 AZURE_AI_MODEL_DEPLOYMENT_NAME="$FOUNDRY_MODEL_DEPLOYMENT"
@@ -455,7 +494,7 @@ async def main():
 
 asyncio.run(main())
 PY
-)
+) 2>&1 | redact | tee -a "$EVIDENCE"
 
 ## Step 5 — prompt agent smoke
 
@@ -555,7 +594,7 @@ finally:
     project.close()
     credential.close()
 PY
-)
+) 2>&1 | redact | tee -a "$EVIDENCE"
 
 ## Step 6 — hosted agent smoke
 
@@ -735,6 +774,7 @@ PY
 ) || fail "hosted agent did not become active"
 
 HOSTED_PRINCIPAL_ID=""
+HOSTED_CLIENT_ID=""
 HOSTED_IDENTITY_LAST_ERROR="hosted agent principal ID was empty"
 for attempt in $(seq 1 6); do
   HOSTED_IDENTITY_RESPONSE=""
@@ -756,9 +796,19 @@ for attempt in $(seq 1 6); do
       ' <<<"$HOSTED_IDENTITY_RESPONSE"
     )"
     then
-      break
+      # Easy Auth also checks the token azp; ACA denies an empty allowedApplications.
+      HOSTED_CLIENT_ID="$(
+        jq -er '
+          [
+            .instance_identity.client_id?,
+            .versions.latest.instance_identity.client_id?
+          ]
+          | map(select(type == "string" and length > 0))
+          | first // empty
+        ' <<<"$HOSTED_IDENTITY_RESPONSE"
+      )" && break
     fi
-    HOSTED_IDENTITY_LAST_ERROR="hosted agent principal ID was empty in both supported response shapes"
+    HOSTED_IDENTITY_LAST_ERROR="hosted agent principal or client ID was empty in both supported response shapes"
   else
     HOSTED_IDENTITY_LAST_ERROR="$(
       printf '%s\n' "$HOSTED_IDENTITY_RESPONSE" | tail -n 1
@@ -770,7 +820,7 @@ for attempt in $(seq 1 6); do
     sleep 10
   fi
 done
-test -n "$HOSTED_PRINCIPAL_ID" ||
+test -n "$HOSTED_PRINCIPAL_ID" && test -n "${HOSTED_CLIENT_ID:-}" ||
   fail "hosted agent identity lookup failed after 6 attempts: $HOSTED_IDENTITY_LAST_ERROR"
 
 AUTH_CONFIG_URL="https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${CHILD_RG}/providers/Microsoft.App/containerApps/${APP_NAME}/authConfigs/current?api-version=2025-01-01"
@@ -782,14 +832,21 @@ AUTH_CONFIG_PROPERTIES="$(
     --output json
 )" || fail "Easy Auth configuration read failed"
 UPDATED_AUTH_CONFIG_BODY="$(
-  jq -c --arg principal_id "$HOSTED_PRINCIPAL_ID" '
+  jq -c --arg principal_id "$HOSTED_PRINCIPAL_ID" --arg client_id "$HOSTED_CLIENT_ID" '
     (.identityProviders //= {})
     | (.identityProviders.azureActiveDirectory //= {})
     | (.identityProviders.azureActiveDirectory.validation //= {})
     | (.identityProviders.azureActiveDirectory.validation
         .defaultAuthorizationPolicy //= {})
-    | del(.identityProviders.azureActiveDirectory.validation
-        .defaultAuthorizationPolicy.allowedApplications)
+    | (.identityProviders.azureActiveDirectory.validation
+        .defaultAuthorizationPolicy.allowedApplications //= [])
+    | if (.identityProviders.azureActiveDirectory.validation
+        .defaultAuthorizationPolicy.allowedApplications
+        | index($client_id)) == null
+      then .identityProviders.azureActiveDirectory.validation
+        .defaultAuthorizationPolicy.allowedApplications += [$client_id]
+      else .
+      end
     | (.identityProviders.azureActiveDirectory.validation
         .defaultAuthorizationPolicy.allowedPrincipals //= {})
     | (.identityProviders.azureActiveDirectory.validation
@@ -803,7 +860,7 @@ UPDATED_AUTH_CONFIG_BODY="$(
       end
     | {properties: .}
   ' <<<"$AUTH_CONFIG_PROPERTIES"
-)" || fail "Easy Auth allowed principal identities update construction failed"
+)" || fail "Easy Auth caller allowlist update construction failed"
 az rest \
   --method put \
   --url "$AUTH_CONFIG_URL" \
@@ -821,8 +878,8 @@ for attempt in $(seq 1 12); do
       --query properties.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy \
       --output json
   )" || fail "Easy Auth allowed principal identities propagation poll failed"
-  if jq -e --arg principal_id "$HOSTED_PRINCIPAL_ID" \
-    '(.allowedApplications? == null) and
+  if jq -e --arg principal_id "$HOSTED_PRINCIPAL_ID" --arg client_id "$HOSTED_CLIENT_ID" \
+    '((.allowedApplications // []) | index($client_id) != null) and
      ((.allowedPrincipals.identities // []) | index($principal_id) != null)' \
     <<<"$CURRENT_AUTHORIZATION_POLICY" >/dev/null
   then
@@ -834,7 +891,7 @@ for attempt in $(seq 1 12); do
   fi
 done
 [[ "$AUTH_ALLOWLIST_CONVERGED" == true ]] ||
-  fail "hosted agent principal object ID missing from Easy Auth allowed principal identities after bounded poll"
+  fail "hosted agent client or principal ID missing from the Easy Auth caller allowlist after bounded poll"
 
 ACTIVE_REVISIONS=""
 for attempt in $(seq 1 6); do
@@ -955,7 +1012,7 @@ project.close()
 credential.close()
 print("HOSTED_AGENT_MCP_CALLS_VALID")
 PY
-)
+) 2>&1 | redact | tee -a "$EVIDENCE"
 
 ## Step 7 — targeted run-owned cleanup
 

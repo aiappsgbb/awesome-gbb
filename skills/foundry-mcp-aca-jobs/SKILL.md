@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "2.0.0"
+  version: "3.0.0"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -295,18 +295,20 @@ The app and job use separate UAMIs, even though they share the same image
 digest. That separation is intentional: one identity reads and updates the
 control plane; the other executes the job and writes output.
 
-Easy Auth caller allowlisting supports two mutually exclusive modes:
+Easy Auth caller allowlisting always needs caller client IDs:
 
-- client ID mode sets only
-  `defaultAuthorizationPolicy.allowedApplications`;
-- principal object ID mode sets only
-  `defaultAuthorizationPolicy.allowedPrincipals.identities`.
+- `allowedMcpCallerClientIds` (required) sets
+  `defaultAuthorizationPolicy.allowedApplications` and matches the token
+  `azp`/`appid`;
+- `allowedMcpCallerPrincipalIds` (optional) lists principal object IDs, sets
+  `defaultAuthorizationPolicy.allowedPrincipals.identities` and matches `oid`.
 
-Choose exactly one nonempty list. With the `2025-01-01` authConfig API, setting
-both lists applies both checks with logical AND; it does not broaden access.
-Use principal object ID mode for hosted agent instance identities. Client ID
-mode remains available for app-only callers whose token identifies an
-allowlisted client application.
+Container Apps stores an omitted `allowedApplications` as `[]` and then rejects
+every caller with `403`, so a principal-only allowlist never admits anyone
+(tested with the `2025-01-01` authConfig API). When both lists are set, both
+checks apply with logical AND; that narrows access, it does not broaden it.
+For a hosted agent, allowlist its `instance_identity.client_id` and
+`instance_identity.principal_id`.
 
 Do not accept caller-supplied image references, commands, environment
 overrides, ARM IDs, secrets, large result bodies, callback URLs, or event
@@ -428,9 +430,9 @@ cp skills/azd-patterns/references/bicep/aca-job.bicep "$WORKDIR/skills/azd-patte
 
 Use `azd up` or `azd deploy` to run the converged postdeploy flow. Do not hand
 roll `az` deploy sequences or reimplement the digest convergence logic here.
-Post-deploy hosted-agent callers use principal object ID mode and are
-allowlisted by the instance identity object ID in
-`defaultAuthorizationPolicy.allowedPrincipals.identities`.
+Post-deploy hosted-agent callers are allowlisted by their instance identity
+client ID in `defaultAuthorizationPolicy.allowedApplications` and by its
+object ID in `defaultAuthorizationPolicy.allowedPrincipals.identities`.
 
 For a brownfield platform, keep `resourceGroupName` as the child resource group
 that receives the app, Job, and UAMIs, and set `platformResourceGroupName` to

@@ -31,10 +31,10 @@ param storageAccountUrl string
 @maxLength(53)
 param outputStorageContainerName string
 
-@description('Allowed app-only caller client IDs for the MCP app.')
+@description('Required caller client IDs (token azp/appid) for the MCP app.')
 param allowedMcpCallerClientIds array = []
 
-@description('Allowed caller principal object IDs for the MCP app.')
+@description('Optional caller principal object IDs (token oid); when set, ANDed with client IDs.')
 param allowedMcpCallerPrincipalIds array = []
 
 @description('Explicit allowlisted input hosts for the MCP policy and job worker.')
@@ -96,7 +96,8 @@ param imageDigest string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld
 param callbackConfig CallbackConfig
 
 var authAudience = 'api://${authClientId}'
-assert exactlyOneMcpCallerAllowlistMode = (empty(allowedMcpCallerClientIds) && !empty(allowedMcpCallerPrincipalIds)) || (!empty(allowedMcpCallerClientIds) && empty(allowedMcpCallerPrincipalIds))
+// ACA stores an omitted allowedApplications as [], which denies every caller (#488).
+assert requireMcpCallerClientIds = !empty(allowedMcpCallerClientIds)
 assert nonemptyMcpCallerClientIds = empty(filter(allowedMcpCallerClientIds, id => empty(trim(id))))
 assert nonemptyMcpCallerPrincipalIds = empty(filter(allowedMcpCallerPrincipalIds, id => empty(trim(id))))
 var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'
@@ -405,11 +406,9 @@ module app 'app.bicep' = {
     uamiResourceId: identities.outputs.appUamiResourceId
     acrServer: acr.properties.loginServer
     authClientId: authClientId
-    allowedMcpCallerClientIds: !empty(allowedMcpCallerClientIds)
-      ? union(allowedMcpCallerClientIds, [
-          identities.outputs.jobUamiClientId
-        ])
-      : []
+    allowedMcpCallerClientIds: union(allowedMcpCallerClientIds, [
+      identities.outputs.jobUamiClientId
+    ])
     allowedMcpCallerPrincipalIds: !empty(allowedMcpCallerPrincipalIds)
       ? union(allowedMcpCallerPrincipalIds, [
           identities.outputs.jobUamiPrincipalId

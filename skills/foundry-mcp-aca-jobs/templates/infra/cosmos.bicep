@@ -78,56 +78,55 @@ resource brownfieldDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@
   }
 }
 
+var taskContainerResource = {
+  id: containerName
+  partitionKey: {
+    paths: [
+      '/ownerScope'
+    ]
+    kind: 'Hash'
+    version: 2
+  }
+  uniqueKeyPolicy: {
+    uniqueKeys: [
+      {
+        paths: [
+          '/idempotencyKeyHash'
+        ]
+      }
+    ]
+  }
+}
+
 resource tasks 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = if (!useExistingAccount) {
   parent: database
   name: containerName
   properties: {
-    resource: {
-      id: containerName
-      partitionKey: {
-        paths: [
-          '/ownerScope'
-        ]
-        kind: 'Hash'
-        version: 2
-      }
-      uniqueKeyPolicy: {
-        uniqueKeys: [
-          {
-            paths: [
-              '/idempotencyKeyHash'
-            ]
-          }
-        ]
-      }
-    }
+    resource: taskContainerResource
   }
 }
 
-resource brownfieldTasks 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = if (useExistingAccount) {
-  name: '${name}/${databaseName}/${containerName}'
+resource brownfieldTasks 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = if (useExistingAccount && !useExistingDatabase) {
+  parent: brownfieldDatabase
+  name: containerName
   properties: {
-    resource: {
-      id: containerName
-      partitionKey: {
-        paths: [
-          '/ownerScope'
-        ]
-        kind: 'Hash'
-        version: 2
-      }
-      uniqueKeyPolicy: {
-        uniqueKeys: [
-          {
-            paths: [
-              '/idempotencyKeyHash'
-            ]
-          }
-        ]
-      }
-    }
+    resource: taskContainerResource
   }
-  dependsOn: [brownfieldDatabase]
+}
+
+// CI reuse: the standing database is only referenced; a dependsOn on the
+// condition-false brownfieldDatabase fails ARM validation (#488).
+resource standingDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15' existing = if (useExistingDatabase) {
+  parent: existingAccount
+  name: databaseName
+}
+
+resource reuseTasks 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = if (useExistingDatabase) {
+  parent: standingDatabase
+  name: containerName
+  properties: {
+    resource: taskContainerResource
+  }
 }
 
 var effectiveEndpoint = useExistingAccount ? existingAccountEndpoint : account!.properties.documentEndpoint

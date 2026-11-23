@@ -793,7 +793,8 @@ async def _run_from_env(owner_scope: str, task_id: str) -> int:
     secret_client: Any | None = None
     try:
         output = BlobOutputStore.from_container_url(config.output_container_url, credential=credential)
-        async with CosmosClient(endpoint=cosmos_endpoint, credential=credential) as cosmos_client:
+        # azure-cosmos CosmosClient takes `url`, not `endpoint` (#488).
+        async with CosmosClient(cosmos_endpoint, credential=credential) as cosmos_client:
             database = cosmos_client.get_database_client(cosmos_database)
             container = database.get_container_client(cosmos_container)
             store = CosmosControlStore(container)

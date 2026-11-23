@@ -131,6 +131,49 @@ class JobsReuseTests(unittest.TestCase):
             with self.subTest(mutate=mutate), self.assertRaises(reuse.ReuseError):
                 reuse.validate(self.config, data)
 
+    def test_registry_read_uses_api_version_that_returns_role_assignment_mode(self):
+        # 2023-07-01 omits roleAssignmentMode, so the contract always failed (#488).
+        calls = []
+        with patch.object(reuse, "get", side_effect=lambda c, rid, v, **k: calls.append((rid, v)) or {}), \
+                patch.object(reuse, "cli", side_effect=reuse.ReuseError("STOP")), self.assertRaises(reuse.ReuseError):
+            reuse.observations(self.config)
+        self.assertIn((self.config["registry"], "2025-11-01"), calls)
+        data = copy.deepcopy(self.data)
+        del data["registry"]["properties"]["roleAssignmentMode"]
+        with self.assertRaisesRegex(reuse.ReuseError, "REGISTRY_CONTRACT"):
+            reuse.validate(self.config, data)
+
+    def test_absence_recognizes_actual_cli_not_found_shapes_only(self):
+        # Stderr shapes observed from az 2.86 `--only-show-errors` (#488).
+        rest = ["rest", "--method", "get"]
+        manifest = ["acr", "manifest", "show-metadata"]
+        absent = [
+            (rest, 'ERROR: Not Found({"error":{"code":"ResourceNotFound","message":"The Resource was not found."}})'),
+            (rest, 'ERROR: NotFound({"code":"NotFound","message":"Message: {\\"Errors\\":[\\"Resource Not Found.\\"]}"})'),
+            (rest, 'ERROR: Not Found({"error":{"code":"ContainerNotFound","message":"The specified container does not exist."}})'),
+            (rest, "ERROR: (ResourceGroupNotFound) Resource group 'x' could not be found."),
+            (rest, 'ERROR: Not Found({"error":{"code":"ContainerAppsJobNotFound","message":"x"}})'),
+            (rest, 'ERROR: Not Found({"error":{"code":"ContainerAppNotFound","message":"x"}})'),
+            (manifest, "ERROR: 2026-11-22 Error: the specified tag does not exist. Correlation ID: x."),
+            (manifest, "ERROR: 2026-11-22 Error: manifest unknown. Correlation ID: x."),
+        ]
+        unknown = [
+            (rest, 'ERROR: Forbidden({"error":{"code":"AuthorizationFailed","message":"no access"}})'),
+            (rest, "ERROR: Not Found(<html>404 Not Found</html>)"),
+            (rest, "ERROR: Connection aborted."),
+            (["acr", "repository", "list"], "ERROR: the specified tag does not exist."),
+        ]
+        for args, stderr in absent + unknown:
+            result = SimpleNamespace(returncode=1, stdout="", stderr=stderr)
+            with self.subTest(stderr=stderr), patch.object(reuse.subprocess, "run", return_value=result):
+                if (args, stderr) in absent:
+                    self.assertIsNone(reuse.cli(self.config, args, absent=True))
+                else:
+                    with self.assertRaisesRegex(reuse.ReuseError, "AZURE_READ_OR_OPERATION_FAILED"):
+                        reuse.cli(self.config, args, absent=True)
+                with self.assertRaisesRegex(reuse.ReuseError, "AZURE_READ_OR_OPERATION_FAILED"):
+                    reuse.cli(self.config, args)
+
     def test_preexisting_temp_resource_is_not_adopted(self):
         with patch.object(reuse, "observations", return_value=self.data), patch.object(reuse, "get", return_value={"id": "existing"}):
             with self.assertRaisesRegex(reuse.ReuseError, "RUN_TARGET_ALREADY_EXISTS"):
@@ -157,6 +200,28 @@ class JobsReuseTests(unittest.TestCase):
             with self.assertRaises(reuse.ReuseError):
                 reuse.cleanup_plan(self.config, bad)
 
+    def test_record_accepts_actual_arm_created_shapes(self):
+        # App/job createdAt omits the UTC offset; Cosmos/blob containers have no systemData (#488).
+        owned = reuse.owned(self.config)
+        shapes = {owned[k][0]: {"id": owned[k][0], "systemData": {"createdAt": "2026-01-01T00:05:00.1234567"}}
+                  for k in ("app", "job")}
+        shapes.update({owned[k][0]: {"id": owned[k][0], "systemData": None} for k in reuse.NO_SYSTEM_DATA})
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "ci-run-owned.json").write_text(json.dumps(self.manifest()))
+            with patch.object(reuse, "get", side_effect=lambda c, rid, v, **k: shapes[rid]):
+                reuse.record_created(project, self.config)
+            created = json.loads((project / "ci-created.json").read_text())
+        self.assertEqual(set(created), set(owned))
+        self.assertIsNone(created["output"]["created_at"])
+        early = {**shapes, owned["app"][0]: {"id": owned["app"][0], "systemData": {"createdAt": "2025-12-31T23:59:59"}}}
+        for bad in (early, {**shapes, owned["job"][0]: {"id": owned["job"][0], "systemData": None}}):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(), \
+                    patch.object(reuse, "get", side_effect=lambda c, rid, v, **k: bad[rid]):
+                (Path(tmp) / "ci-run-owned.json").write_text(json.dumps(self.manifest()))
+                with self.assertRaisesRegex(reuse.ReuseError, "CREATION_OWNERSHIP_UNVERIFIED"):
+                    reuse.record_created(Path(tmp), self.config)
+
     def test_cleanup_rejects_unrecorded_or_replaced_objects_before_delete(self):
         with patch.object(reuse, "get", return_value={"id": "not-recorded"}), patch.object(reuse, "cli") as cli:
             with self.assertRaises(reuse.ReuseError):
@@ -168,6 +233,29 @@ class JobsReuseTests(unittest.TestCase):
             with self.assertRaisesRegex(reuse.ReuseError, "CLEANUP_RESOURCE_REPLACED"):
                 reuse.cleanup(self.config, self.manifest(), created)
             cli.assert_not_called()
+
+    def test_cleanup_matches_identity_key_case_insensitively(self):
+        # ARM returned `/resourcegroups/` for the user-assigned identity key (#488).
+        target = reuse.owned(self.config)["app"][0]
+        key = self.config["app_identity"].replace("/resourceGroups/", "/resourcegroups/")
+        current = {"id": target, "systemData": {"createdAt": "2026-01-01T00:05:00"},
+                   "identity": {"userAssignedIdentities": {key: {}}},
+                   "properties": {"managedEnvironmentId": self.config["environment"]}}
+        state = {"present": True}
+        def get(config, rid, version, **kwargs):
+            return current if rid == target and state["present"] else None
+        def cli(config, args, **kwargs):
+            state["present"] = False
+        created = {"app": {"id": target, "created_at": "2026-01-01T00:05:00"}}
+        with patch.object(reuse, "get", side_effect=get), patch.object(reuse, "cli", side_effect=cli) as delete:
+            reuse.cleanup(self.config, self.manifest(), created)
+        delete.assert_called_once()
+        current["identity"]["userAssignedIdentities"] = {key.replace("app-identity", "other"): {}}
+        state["present"] = True
+        with patch.object(reuse, "get", side_effect=get), patch.object(reuse, "cli") as delete, \
+                self.assertRaisesRegex(reuse.ReuseError, "CLEANUP_IDENTITY_MISMATCH"):
+            reuse.cleanup(self.config, self.manifest(), created)
+        delete.assert_not_called()
 
     def test_stage_selects_ci_entrypoint_without_modifying_normal_template(self):
         original = (TEMPLATE / "infra/main.bicep").read_bytes()
@@ -183,6 +271,8 @@ class JobsReuseTests(unittest.TestCase):
             self.assertIn("registry: ciregistry.azurecr.io", yaml)
             self.assertIn("image: ci-smoke-mcp-jobs-abcdef12", yaml)
             self.assertIn("tag: run", yaml)
+            self.assertIn("remoteBuild: true", yaml)
+            self.assertIn("    resourceName: ci-smoke-mcp-jobs-abcdef12\n", yaml)
             for name in (".dockerignore", ".azdignore"):
                 exclusion = (project / name).read_text()
                 self.assertTrue(exclusion.startswith("**\n"))
@@ -196,9 +286,15 @@ class JobsReuseTests(unittest.TestCase):
                    "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL": self.config["storage_endpoint"]}
             with patch.object(reuse.subprocess, "run", return_value=SimpleNamespace(stdout=json.dumps(azd))):
                 reuse.check_staged_target(project, self.config)
+            # A concurrent azd env rewrite that settles is re-read, not adopted blindly.
+            partial = SimpleNamespace(stdout=json.dumps({"AZURE_ENV_NAME": "x"}))
+            with patch.object(reuse.subprocess, "run", side_effect=[partial, SimpleNamespace(stdout=json.dumps(azd))]), \
+                    patch.object(reuse.time, "sleep"):
+                reuse.check_staged_target(project, self.config)
             azd["AZURE_RESOURCE_GROUP"] = "wrong-group"
-            with patch.object(reuse.subprocess, "run", return_value=SimpleNamespace(stdout=json.dumps(azd))):
-                with self.assertRaisesRegex(reuse.ReuseError, "AZD_TARGET_DRIFT"):
+            with patch.object(reuse.subprocess, "run", return_value=SimpleNamespace(stdout=json.dumps(azd))), \
+                    patch.object(reuse.time, "sleep"):
+                with self.assertRaisesRegex(reuse.ReuseError, "^AZD_TARGET_DRIFT:AZURE_RESOURCE_GROUP$"):
                     reuse.check_staged_target(project, self.config)
             with self.assertRaises(FileExistsError), patch.object(reuse, "check", return_value=reuse.validate(self.config, self.data)):
                 reuse.prepare(project, self.config)
@@ -270,6 +366,56 @@ class JobsReuseTests(unittest.TestCase):
             with self.assertRaises(reuse.ReuseError):
                 reuse.cleanup_image(self.config, receipt)
             cli.assert_not_called()
+
+    def test_record_image_reads_tags_from_the_manifest_not_the_tag_object(self):
+        # az 2.86: `--name repo:tag` returns the tag object; `repo@digest` has `tags` (#488).
+        digest = "sha256:" + "c" * 64
+        tag_object = {"name": "run", "digest": digest, "createdTime": "2026-01-01T00:05:00Z"}
+        manifest = {"digest": digest, "tags": ["run"]}
+        def cli(config, args, **kwargs):
+            return tag_object if args[-1].endswith(":run") else manifest if args[-1].endswith("@" + digest) else None
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "ci-run-owned.json").write_text(json.dumps(self.manifest()))
+            with patch.object(reuse, "cli", side_effect=cli):
+                reuse.record_image(project, self.config)
+            self.assertEqual(json.loads((project / "ci-image.json").read_text())["digest"], digest)
+
+    def test_cleanup_retries_transient_delete_and_names_the_error_code(self):
+        failure = SimpleNamespace(returncode=1, stdout="", stderr='ERROR: Conflict({"error":{"code":"ContainerAppOperationInProgress","message":"x"}})')
+        with patch.object(reuse.subprocess, "run", return_value=failure), \
+                self.assertRaisesRegex(reuse.ReuseError, "^AZURE_READ_OR_OPERATION_FAILED:ContainerAppOperationInProgress$"):
+            reuse.cli(self.config, ["rest", "--method", "delete"])
+        target = reuse.owned(self.config)["job"][0]
+        current = {"id": target, "systemData": {"createdAt": "2026-01-01T00:05:00"},
+                   "identity": {"userAssignedIdentities": {self.config["worker_identity"]: {}}},
+                   "properties": {"environmentId": self.config["environment"]}}
+        state = {"present": True, "deletes": 0}
+        def get(config, rid, version, **kwargs):
+            return current if rid == target and state["present"] else None
+        def cli(config, args, **kwargs):
+            state["deletes"] += 1
+            if state["deletes"] == 1:
+                raise reuse.ReuseError("AZURE_READ_OR_OPERATION_FAILED:ContainerAppOperationInProgress")
+            state["present"] = False
+        with patch.object(reuse, "get", side_effect=get), patch.object(reuse, "cli", side_effect=cli), \
+                patch.object(reuse.time, "sleep"):
+            reuse.cleanup(self.config, self.manifest(), {"job": {"id": target, "created_at": "2026-01-01T00:05:00"}})
+        self.assertEqual(state["deletes"], 2)
+
+    def test_app_cosmos_clients_bind_to_the_real_sdk_signature(self):
+        # Stubs accepted `endpoint=`; the real client takes `url` and every worker failed (#488).
+        import ast, inspect
+        from azure.cosmos.aio import CosmosClient
+        signature = inspect.signature(CosmosClient.__init__)
+        app = TEMPLATE.parent / "references/python/app"
+        for name in ("job_worker.py", "mcp_server.py"):
+            calls = [n for n in ast.walk(ast.parse((app / name).read_text()))
+                     if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "CosmosClient"]
+            self.assertTrue(calls, name)
+            for call in calls:
+                with self.subTest(file=name):
+                    signature.bind(None, *["x"] * len(call.args), **{k.arg: "x" for k in call.keywords})
 
     def test_fixture_invoke_does_not_replay_after_malformed_accepted_response(self):
         calls = []

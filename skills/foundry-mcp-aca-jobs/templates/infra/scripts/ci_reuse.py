@@ -45,9 +45,10 @@ TYPES = {
     "storage": "Microsoft.Storage/storageAccounts",
     "registry": "Microsoft.ContainerRegistry/registries",
 }
+# Registry needs 2025-11-01+: older api-versions omit roleAssignmentMode (null).
 VERSIONS = {"group": "2022-09-01", "environment": "2024-03-01",
             "app_identity": "2023-01-31", "worker_identity": "2023-01-31",
-            "cosmos": "2024-11-15", "storage": "2023-01-01", "registry": "2023-07-01"}
+            "cosmos": "2024-11-15", "storage": "2023-01-01", "registry": "2025-11-01"}
 JOB_ACTIONS = {"Microsoft.App/jobs/read", "Microsoft.App/jobs/start/action",
                "Microsoft.App/jobs/execution/read", "Microsoft.App/jobs/executions/read",
                "Microsoft.App/jobs/stop/execution/action"}
@@ -124,6 +125,22 @@ def settings(environ, run_id):
     return config
 
 
+# Exact not-found error codes only; generic HTTP 404, auth and transport stay unknown.
+# ARM: `Not Found({"error":{"code":"ResourceNotFound"...` (az rest), or `(ResourceNotFound)`.
+# Cosmos SQL child: `"code":"NotFound"`; blob container: `"code":"ContainerNotFound"`;
+# ACA app/job just after delete: `ContainerAppNotFound` / `ContainerAppsJobNotFound`.
+ABSENT_CODES = (r"ResourceNotFound|ResourceGroupNotFound|ContainerNotFound|ContainerAppsJobNotFound|"
+                r"ContainerAppNotFound|NotFound")
+ACR_ABSENT = r"manifest unknown|name unknown|the specified tag does not exist"
+
+
+def not_found(args, stderr):
+    if re.search(r'"code"\s*:\s*"(' + ABSENT_CODES + r')"|\((' + ABSENT_CODES + r')\)', stderr):
+        return True
+    return args[:2] == ["acr", "manifest"] and re.search(
+        r"\b(MANIFEST_UNKNOWN|NAME_UNKNOWN)\b|" + ACR_ABSENT, stderr, re.IGNORECASE) is not None
+
+
 def cli(config, args, *, absent=False):
     command = ["az", *args, "--output", "json", "--only-show-errors"]
     if args[:2] != ["account", "show"]:
@@ -131,12 +148,11 @@ def cli(config, args, *, absent=False):
     result = subprocess.run(command,
                             capture_output=True, text=True, timeout=45)
     if result.returncode:
-        # Only exact resource-not-found is absence. Generic HTTP404/auth/transport is unknown.
-        if absent and re.search(r"\((ResourceNotFound|ResourceGroupNotFound)\)", result.stderr):
+        if absent and not_found(args, result.stderr):
             return None
-        if absent and args[:2] == ["acr", "manifest"] and re.search(r"\b(MANIFEST_UNKNOWN|NAME_UNKNOWN)\b", result.stderr):
-            return None
-        raise ReuseError("AZURE_READ_OR_OPERATION_FAILED")
+        # Surface only the Azure error code, never the message or IDs.
+        code = re.search(r'"code"\s*:\s*"([A-Za-z]+)"|\(([A-Za-z]+)\)', result.stderr)
+        raise ReuseError("AZURE_READ_OR_OPERATION_FAILED" + (":" + (code.group(1) or code.group(2)) if code else ""))
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
@@ -262,7 +278,7 @@ def owned(config):
     storage = config["storage"] + "/blobServices/default/containers/"
     return {
         "app": (group + "/providers/Microsoft.App/containerApps/ci-smoke-mcp-jobs-" + run, "2024-03-01"),
-        "job": (group + "/providers/Microsoft.App/jobs/ci-smoke-mcp-jobs-worker-" + run, "2026-01-01"),
+        "job": (group + "/providers/Microsoft.App/jobs/ci-smoke-mcp-jobs-w-" + run, "2026-01-01"),
         "control": (config["cosmos"] + "/sqlDatabases/" + config["database"] + "/containers/ci-smoke-mcp-jobs-task-" + run, "2024-11-15"),
         "output": (storage + "mcpjobs-" + run, "2023-01-01"),
         "callbacks": (storage + "mcpjobs-" + run + "-callbacks", "2023-01-01"),
@@ -294,7 +310,8 @@ def prepare(project, config):
         "acrServer": details["registry"]["loginServer"], "appIdentityId": config["app_identity"],
         "workerIdentityId": config["worker_identity"], "appClientId": details["app"]["clientId"],
         "workerClientId": details["worker"]["clientId"], "workerPrincipalId": details["worker"]["principalId"],
-        "callerPrincipalId": config["executor"], "authClientId": config["audience"],
+        "callerPrincipalId": config["executor"], "callerClientId": config["executor_client"],
+        "authClientId": config["audience"],
         "cosmosAccountName": config["cosmos"].rsplit("/", 1)[1], "cosmosEndpoint": config["cosmos_endpoint"],
         "cosmosDatabaseName": config["database"], "storageAccountName": config["storage"].rsplit("/", 1)[1],
         "storageAccountUrl": config["storage_endpoint"],
@@ -308,8 +325,14 @@ def prepare(project, config):
     azure_yaml = project / "azure.yaml"
     manifest = azure_yaml.read_text()
     anchor = "      context: .\n"
-    require(manifest.count(anchor) == 1, "CANONICAL_AZD_SERVICE_SHAPE")
+    host = "    host: containerapp\n"
+    require(manifest.count(anchor) == 1 and manifest.count(host) == 1, "CANONICAL_AZD_SERVICE_SHAPE")
+    # Pin the run's app: tag discovery is ambiguous in a shared resource group.
+    manifest = manifest.replace(host, host + f"    resourceName: {owned(config)['app'][0].rsplit('/', 1)[1]}\n")
+    # ACR remote build: azd 1.34 packages concurrently with preprovision, and a
+    # local runner build rewrote the azd env while the hook read it (#488).
     azure_yaml.write_text(manifest.replace(anchor, anchor +
+        "      remoteBuild: true\n"
         f"      registry: {config['registry_host']}\n"
         f"      image: {image_repository(config)}\n"
         "      tag: run\n"))
@@ -331,10 +354,17 @@ def check_staged_target(project, config):
         "MCP_ACA_JOBS_COSMOS_ENDPOINT": config["cosmos_endpoint"],
         "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL": config["storage_endpoint"],
     }
-    result = subprocess.run(["azd", "env", "get-values", "--output", "json"], cwd=project,
-                            capture_output=True, text=True, timeout=30, check=True)
-    actual = json.loads(result.stdout, object_pairs_hook=unique)
-    require(isinstance(actual, dict) and all(actual.get(k) == v for k, v in expected.items()), "AZD_TARGET_DRIFT")
+    for attempt in range(3):
+        result = subprocess.run(["azd", "env", "get-values", "--output", "json"], cwd=project,
+                                capture_output=True, text=True, timeout=30, check=True)
+        actual = json.loads(result.stdout, object_pairs_hook=unique)
+        require(isinstance(actual, dict), "AZD_TARGET_DRIFT")
+        drift = sorted(k for k, v in expected.items() if actual.get(k) != v)
+        if not drift:
+            break
+        time.sleep(2)
+    # Key names only; values stay out of logs.
+    require(not drift, "AZD_TARGET_DRIFT:" + ",".join(drift))
     hashes = load(project / "ci-stage.json")
     require(set(hashes) == {"infra/main.bicep", "infra/main.parameters.json"}, "STAGED_GRAPH_DRIFT")
     require(all(hashlib.sha256((project / name).read_bytes()).hexdigest() == digest
@@ -346,8 +376,14 @@ def image_repository(config, hosted=False):
 
 
 def image_metadata(config, *, absent=False, hosted=False):
-    return cli(config, ["acr", "manifest", "show-metadata", "--registry",
-                       config["registry"].rsplit("/", 1)[1], "--name", image_repository(config, hosted) + ":run"], absent=absent)
+    # A tag lookup returns the tag object (no `tags`); re-read the manifest by digest.
+    registry, repository = config["registry"].rsplit("/", 1)[1], image_repository(config, hosted)
+    tag = cli(config, ["acr", "manifest", "show-metadata", "--registry", registry, "--name", repository + ":run"], absent=absent)
+    if tag is None:
+        return None
+    require(isinstance(tag, dict) and re.fullmatch(r"sha256:[0-9a-f]{64}", tag.get("digest", "")), "IMAGE_RECEIPT")
+    return cli(config, ["acr", "manifest", "show-metadata", "--registry", registry,
+                        "--name", repository + "@" + tag["digest"]], absent=absent)
 
 
 def record_image(project, config, *, hosted=False):
@@ -357,6 +393,16 @@ def record_image(project, config, *, hosted=False):
     require(item.get("tags") == ["run"], "IMAGE_TAG_OWNERSHIP")
     write_new(project / ("ci-hosted-image.json" if hosted else "ci-image.json"),
               {"repository": image_repository(config, hosted), "digest": item["digest"]})
+
+
+# Cosmos SQL and blob containers return no ARM systemData.
+NO_SYSTEM_DATA = {"control", "output", "callbacks"}
+
+
+def utc(stamp):
+    # Microsoft.App systemData.createdAt is UTC but may omit the offset.
+    parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def record_created(project, config):
@@ -370,8 +416,11 @@ def record_created(project, config):
         require(same(item.get("id"), resource_id), "CREATED_TARGET_MISMATCH")
         started = datetime.fromisoformat(manifest["observed_at"])
         stamp = (item.get("systemData") or {}).get("createdAt")
-        require(isinstance(stamp, str) and datetime.fromisoformat(stamp.replace("Z", "+00:00")) >= started,
-                "CREATION_OWNERSHIP_UNVERIFIED")
+        if name in NO_SYSTEM_DATA and stamp is None:
+            # Ownership rests on the recorded pre-write absence of this run-scoped name.
+            created[name] = {"id": resource_id, "created_at": None}
+            continue
+        require(isinstance(stamp, str) and utc(stamp) >= started, "CREATION_OWNERSHIP_UNVERIFIED")
         created[name] = {"id": resource_id, "created_at": stamp}
     write_new(project / "ci-created.json", created)
 
@@ -403,12 +452,22 @@ def cleanup(config, manifest, created):
         # deployed bindings; names alone do not justify deleting a shared object.
         if name in ("app", "job"):
             identity = config["app_identity" if name == "app" else "worker_identity"]
-            require(identity in (current.get("identity", {}).get("userAssignedIdentities") or {}), "CLEANUP_IDENTITY_MISMATCH")
+            # ARM may return the key as /resourcegroups/; ARM IDs compare case-insensitively.
+            assigned = (current.get("identity") or {}).get("userAssignedIdentities") or {}
+            require(any(same(key, identity) for key in assigned), "CLEANUP_IDENTITY_MISMATCH")
             props = current["properties"]
             require(same(props.get("environmentId") or props.get("managedEnvironmentId"), config["environment"]), "CLEANUP_ENVIRONMENT_MISMATCH")
-        cli(config, ["rest", "--method", "delete", "--url",
-                     f"https://management.azure.com{resource_id}?api-version={version}"])
-        for _ in range(12):
+        # DELETE is idempotent; retry briefly while a deploy-time update settles.
+        for attempt in range(6):
+            try:
+                cli(config, ["rest", "--method", "delete", "--url",
+                             f"https://management.azure.com{resource_id}?api-version={version}"])
+                break
+            except ReuseError:
+                if attempt == 5 or get(config, resource_id, version, absent=True) is None:
+                    raise
+                time.sleep(10)
+        for _ in range(36):
             if get(config, resource_id, version, absent=True) is None:
                 break
             time.sleep(5)

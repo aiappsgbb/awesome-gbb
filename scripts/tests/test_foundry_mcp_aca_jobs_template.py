@@ -237,11 +237,12 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     def _allowlist_assertions_accept(
         client_ids: list[str], principal_ids: list[str]
     ) -> bool:
-        exactly_one_mode = bool(client_ids) != bool(principal_ids)
+        # ACA denies an empty allowedApplications, so client IDs are required.
+        client_ids_required = bool(client_ids)
         client_values_are_nonempty = all(value.strip() for value in client_ids)
         principal_values_are_nonempty = all(value.strip() for value in principal_ids)
         return (
-            exactly_one_mode
+            client_ids_required
             and client_values_are_nonempty
             and principal_values_are_nonempty
         )
@@ -386,7 +387,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "2.0.0")
+        self.assertEqual(skill_fm["metadata"]["version"], "3.0.0")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -1206,7 +1207,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             skill,
         )
 
-    def test_skill_and_readme_document_mutually_exclusive_easy_auth_modes(
+    def test_skill_and_readme_document_required_client_id_easy_auth_allowlist(
         self,
     ) -> None:
         for path in (SKILL / "SKILL.md", SKILL / "README.md"):
@@ -1214,7 +1215,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 normalized = " ".join(path.read_text(encoding="utf-8").split())
                 self.assertIn("client ID", normalized)
                 self.assertIn("principal object ID", normalized)
-                self.assertIn("mutually exclusive", normalized)
+                self.assertNotIn("mutually exclusive", normalized)
+                self.assertIn("principal-only allowlist never", normalized)
                 self.assertIn("hosted", normalized.lower())
                 self.assertNotIn(
                     "adding the principal ID alongside client IDs", normalized
@@ -1401,6 +1403,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("HOSTED_IDENTITY_LAST_ERROR", fixture)
         self.assertIn('sleep 10', fixture)
         self.assertIn('test -n "$HOSTED_PRINCIPAL_ID"', fixture)
+        self.assertIn(".instance_identity.client_id", fixture)
+        self.assertIn('test -n "${HOSTED_CLIENT_ID:-}"', fixture)
         self.assertIn(
             'resourceGroups/${CHILD_RG}/providers/Microsoft.App/containerApps/${APP_NAME}/authConfigs/current?api-version=2025-01-01',
             fixture,
@@ -1436,7 +1440,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "validation.defaultAuthorizationPolicy",
             normalized,
         )
-        self.assertIn("(.allowedApplications? == null)", fixture)
+        self.assertNotIn("(.allowedApplications? == null)", fixture)
+        self.assertIn("((.allowedApplications // []) | index($client_id) != null)", fixture)
         self.assertIn(
             "hosted agent identity lookup failed after 6 attempts: $HOSTED_IDENTITY_LAST_ERROR",
             fixture,
@@ -1450,7 +1455,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             fixture,
         )
         self.assertIn(
-            "hosted agent principal object ID missing from Easy Auth allowed principal identities after bounded poll",
+            "hosted agent client or principal ID missing from the Easy Auth caller allowlist after bounded poll",
             fixture,
         )
         self.assertNotIn('echo "$HOSTED_PRINCIPAL_ID"', fixture)
@@ -1464,8 +1469,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, fixture)
         self.assertIn(
-            "Post-deploy hosted-agent callers use principal object ID mode",
-            skill,
+            "Post-deploy hosted-agent callers are allowlisted by their instance identity",
+            " ".join(skill.split()),
         )
         self.assertIn(
             "defaultAuthorizationPolicy.allowedPrincipals.identities", skill
@@ -1532,7 +1537,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
 
         jq_program_match = re.search(
             r"UPDATED_AUTH_CONFIG_BODY=\"\$\(.*?"
-            r"jq -c --arg principal_id \"\$HOSTED_PRINCIPAL_ID\" '"
+            r"jq -c --arg principal_id \"\$HOSTED_PRINCIPAL_ID\" --arg client_id \"\$HOSTED_CLIENT_ID\" '"
             r"(?P<program>.*?)"
             r"'\s+<<<\"\$AUTH_CONFIG_PROPERTIES\"",
             fixture,
@@ -1550,7 +1555,6 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                         "defaultAuthorizationPolicy": {
                             "allowedApplications": [
                                 "existing-caller-client",
-                                "hosted-caller-client",
                             ],
                             "allowedPrincipals": {
                                 "identities": [
@@ -1571,6 +1575,9 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 "--arg",
                 "principal_id",
                 "hosted-principal-object-id",
+                "--arg",
+                "client_id",
+                "hosted-caller-client",
                 jq_program_match.group("program"),
             ],
             input=json.dumps(original_properties),
@@ -1587,7 +1594,11 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         policy = updated_body["properties"]["identityProviders"][
             "azureActiveDirectory"
         ]["validation"]["defaultAuthorizationPolicy"]
-        self.assertNotIn("allowedApplications", policy)
+        # ACA denies an empty allowedApplications; keep existing clients, add once.
+        self.assertEqual(
+            policy["allowedApplications"],
+            ["existing-caller-client", "hosted-caller-client"],
+        )
         self.assertEqual(
             policy["allowedPrincipals"]["identities"],
             [
@@ -1603,6 +1614,9 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 "--arg",
                 "principal_id",
                 "hosted-principal-object-id",
+                "--arg",
+                "client_id",
+                "hosted-caller-client",
                 jq_program_match.group("program"),
             ],
             input=json.dumps(updated_body["properties"]),
@@ -1611,12 +1625,15 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             text=True,
         )
         self.assertEqual(transformed_again.returncode, 0, transformed_again.stderr)
+        again = json.loads(transformed_again.stdout)["properties"][
+            "identityProviders"
+        ]["azureActiveDirectory"]["validation"]["defaultAuthorizationPolicy"]
         self.assertEqual(
-            json.loads(transformed_again.stdout)["properties"][
-                "identityProviders"
-            ]["azureActiveDirectory"]["validation"]["defaultAuthorizationPolicy"][
-                "allowedPrincipals"
-            ]["identities"],
+            again["allowedApplications"],
+            ["existing-caller-client", "hosted-caller-client"],
+        )
+        self.assertEqual(
+            again["allowedPrincipals"]["identities"],
             [
                 "ci-uami-principal-object-id",
                 "job-uami-principal-object-id",
@@ -1635,7 +1652,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             (self._infra_dir() / "main.parameters.json").read_text(encoding="utf-8")
         )["parameters"]
 
-        self.assertEqual(parameters["allowedMcpCallerClientIds"]["value"], [])
+        self.assertEqual(
+            parameters["allowedMcpCallerClientIds"]["value"],
+            ["${MCP_ACA_JOBS_CALLER_CLIENT_ID}"],
+        )
         self.assertEqual(
             parameters["allowedMcpCallerPrincipalIds"]["value"],
             ["${MCP_ACA_JOBS_CALLER_PRINCIPAL_ID}"],
@@ -2050,11 +2070,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("param allowedMcpCallerClientIds array = []", app)
         self.assertIn("param allowedMcpCallerPrincipalIds array = []", app)
         self.assertIn(
-            "assert exactlyOneMcpCallerAllowlistMode = "
-            "(empty(allowedMcpCallerClientIds) && !empty(allowedMcpCallerPrincipalIds)) "
-            "|| (!empty(allowedMcpCallerClientIds) && empty(allowedMcpCallerPrincipalIds))",
+            "assert requireMcpCallerClientIds = !empty(allowedMcpCallerClientIds)",
             normalized,
         )
+        self.assertNotIn("exactlyOneMcpCallerAllowlistMode", normalized)
         self.assertIn(
             "assert nonemptyMcpCallerClientIds = "
             "empty(filter(allowedMcpCallerClientIds, id => empty(trim(id))))",
@@ -2066,9 +2085,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             normalized,
         )
         self.assertIn(
-            "defaultAuthorizationPolicy: !empty(allowedMcpCallerClientIds) "
+            "defaultAuthorizationPolicy: empty(allowedMcpCallerPrincipalIds) "
             "? { allowedApplications: allowedMcpCallerClientIds } "
-            ": { allowedPrincipals: { identities: allowedMcpCallerPrincipalIds } }",
+            ": { allowedApplications: allowedMcpCallerClientIds "
+            "allowedPrincipals: { identities: allowedMcpCallerPrincipalIds } }",
             normalized,
         )
         self.assertIn("param azdServiceName string = 'mcp'", app)
@@ -2089,7 +2109,9 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15", cosmos)
         self.assertIn("resource existingAccount 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' existing = if (useExistingAccount)", cosmos)
         self.assertIn("resource brownfieldDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15' = if (useExistingAccount && !useExistingDatabase)", cosmos)
-        self.assertIn("resource brownfieldTasks 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = if (useExistingAccount)", cosmos)
+        self.assertIn("resource brownfieldTasks 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = if (useExistingAccount && !useExistingDatabase)", cosmos)
+        self.assertIn("resource standingDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15' existing = if (useExistingDatabase)", cosmos)
+        self.assertIn("resource reuseTasks 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = if (useExistingDatabase)", cosmos)
         self.assertIn("param useExistingDatabase bool = false", cosmos)
         self.assertNotIn("existingTasks", cosmos)
         self.assertIn("paths: [ '/ownerScope' ]", normalized)
@@ -2476,8 +2498,9 @@ param callbackConfig = {{
 
         cases = (
             ("client-only", ["caller-client"], [], True),
-            ("principal-only", [], ["caller-principal"], True),
-            ("both", ["caller-client"], ["caller-principal"], False),
+            ("principal-only", [], ["caller-principal"], False),
+            ("both", ["caller-client"], ["caller-principal"], True),
+            ("both-principal-blank-entry", ["caller-client"], [" "], False),
             ("neither", [], [], False),
             ("client-empty-entry", [""], [], False),
             ("principal-whitespace-entry", [], ["   "], False),
@@ -2505,11 +2528,8 @@ param callbackConfig = {{
         self,
     ) -> None:
         expected_asserts = {
-            "exactlyOneMcpCallerAllowlistMode": (
-                "[or(and(empty(parameters('allowedMcpCallerClientIds')), "
-                "not(empty(parameters('allowedMcpCallerPrincipalIds')))), "
-                "and(not(empty(parameters('allowedMcpCallerClientIds'))), "
-                "empty(parameters('allowedMcpCallerPrincipalIds'))))]"
+            "requireMcpCallerClientIds": (
+                "[not(empty(parameters('allowedMcpCallerClientIds')))]"
             ),
             "nonemptyMcpCallerClientIds": (
                 "[empty(filter(parameters('allowedMcpCallerClientIds'), "
@@ -2605,16 +2625,14 @@ param callbackConfig = {{
         self.assertIn("param allowedMcpCallerClientIds array = []", main)
         self.assertIn("param allowedMcpCallerPrincipalIds array = []", main)
         self.assertIn(
-            "assert exactlyOneMcpCallerAllowlistMode = "
-            "(empty(allowedMcpCallerClientIds) && !empty(allowedMcpCallerPrincipalIds)) "
-            "|| (!empty(allowedMcpCallerClientIds) && empty(allowedMcpCallerPrincipalIds))",
+            "assert requireMcpCallerClientIds = !empty(allowedMcpCallerClientIds)",
             normalized,
         )
+        self.assertNotIn("exactlyOneMcpCallerAllowlistMode", normalized)
         self.assertRegex(
             normalized,
-            r"allowedMcpCallerClientIds:\s*!empty\(allowedMcpCallerClientIds\)\s*"
-            r"\?\s*union\(allowedMcpCallerClientIds,\s*\[\s*identities\.outputs\.jobUamiClientId\s*\]\)\s*"
-            r":\s*\[\]",
+            r"allowedMcpCallerClientIds:\s*union\(allowedMcpCallerClientIds,\s*"
+            r"\[\s*identities\.outputs\.jobUamiClientId\s*\]\)",
         )
         self.assertRegex(
             normalized,
