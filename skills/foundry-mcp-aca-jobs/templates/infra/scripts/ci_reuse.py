@@ -51,7 +51,7 @@ VERSIONS = {"group": "2022-09-01", "environment": "2024-03-01",
             "cosmos": "2024-11-15", "storage": "2023-01-01", "registry": "2025-11-01"}
 JOB_ACTIONS = {"Microsoft.App/jobs/read", "Microsoft.App/jobs/start/action",
                "Microsoft.App/jobs/execution/read", "Microsoft.App/jobs/executions/read",
-               "Microsoft.App/jobs/stop/execution/action"}
+               "Microsoft.App/jobs/stop/execution/action", "Microsoft.App/jobs/executions/*"}
 BUILTIN_ROLES = {
     "Contributor": "b24988ac-6180-42a0-ab88-20f7382dd24c",
     "AcrPull": "7f951dda-4ed3-4680-a7ca-43fe172d538d",

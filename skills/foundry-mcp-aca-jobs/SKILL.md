@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "3.0.0"
+  version: "3.0.1"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -294,6 +294,12 @@ Allowlists are policy-driven, not caller-driven:
 The app and job use separate UAMIs, even though they share the same image
 digest. That separation is intentional: one identity reads and updates the
 control plane; the other executes the job and writes output.
+
+The app's custom job role must include `Microsoft.App/jobs/executions/*`.
+`jobs.begin_stop_execution` calls `.../executions/{name}/stop`, which ARM
+authorizes as `Microsoft.App/jobs/executions/stop/action`. The provider does
+not register that action, so a custom role rejects it by name and can grant it
+only by wildcard. Without it, cancel fails with `403` (`task forbidden`).
 
 Easy Auth caller allowlisting always needs caller client IDs:
 

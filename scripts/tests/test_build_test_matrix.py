@@ -470,7 +470,7 @@ class TestFullMatrix(unittest.TestCase):
 
     def test_jobs_prompt_recipe_has_its_own_frozen_contract(self) -> None:
         jobs = ROOT / "skills/foundry-mcp-aca-jobs"
-        fixture = (jobs / "test-fixture/consumer_prompt.md").read_text()
+        fixture = (jobs / "test-fixture/consumer_prompt.md").read_text() + (jobs / "test-fixture/smoke.sh").read_text()
         self.assertNotIn("foundry-prompt-agents", fixture)
         self.assertIn("Do NOT browse the repository", fixture)
         self.assertIn("uv run --frozen --group fixture python", fixture)

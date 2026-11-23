@@ -91,6 +91,9 @@ resource jobRoleDefinition 'Microsoft.Authorization/roleDefinitions@2022-04-01' 
           'Microsoft.App/jobs/execution/read'
           'Microsoft.App/jobs/executions/read'
           'Microsoft.App/jobs/stop/execution/action'
+          // jobs.begin_stop_execution needs jobs/executions/stop/action, which the provider
+          // does not register, so a custom role can only grant it by wildcard (#488).
+          'Microsoft.App/jobs/executions/*'
         ]
         notActions: []
       }
