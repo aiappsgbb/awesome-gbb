@@ -544,7 +544,7 @@ try:
         # Diagnostics only (no replay): which MCP call failed and its public error.
         try:
             for item in openai.conversations.items.list(conversation_id=conversation.id):
-                if getattr(item, "type", None) == "mcp_call":
+                if getattr(item, "type", "") in ("mcp_call",):
                     print("PROMPT_MCP_CALL", getattr(item, "name", None),
                           redact_error(str(getattr(item, "error", None)))[:400])
         except Exception as exc:
