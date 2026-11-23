@@ -403,6 +403,20 @@ class JobsReuseTests(unittest.TestCase):
             reuse.cleanup(self.config, self.manifest(), {"job": {"id": target, "created_at": "2026-01-01T00:05:00"}})
         self.assertEqual(state["deletes"], 2)
 
+    def test_app_cosmos_clients_bind_to_the_real_sdk_signature(self):
+        # Stubs accepted `endpoint=`; the real client takes `url` and every worker failed (#488).
+        import ast, inspect
+        from azure.cosmos.aio import CosmosClient
+        signature = inspect.signature(CosmosClient.__init__)
+        app = TEMPLATE.parent / "references/python/app"
+        for name in ("job_worker.py", "mcp_server.py"):
+            calls = [n for n in ast.walk(ast.parse((app / name).read_text()))
+                     if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "CosmosClient"]
+            self.assertTrue(calls, name)
+            for call in calls:
+                with self.subTest(file=name):
+                    signature.bind(None, *["x"] * len(call.args), **{k.arg: "x" for k in call.keywords})
+
     def test_fixture_invoke_does_not_replay_after_malformed_accepted_response(self):
         calls = []
         def respond(request):

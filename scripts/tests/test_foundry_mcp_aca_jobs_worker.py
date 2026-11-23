@@ -137,9 +137,10 @@ def _ensure_azure_worker_stubs() -> None:
             return self.container
 
     class _CosmosClient(_AsyncCloseable):
-        def __init__(self, endpoint: str, credential: Any) -> None:
-            super().__init__(endpoint, credential)
-            self.endpoint = endpoint
+        # Mirrors azure.cosmos.aio.CosmosClient(url, credential, ...).
+        def __init__(self, url: str, credential: Any) -> None:
+            super().__init__(url, credential)
+            self.endpoint = url
             self.credential = credential
             self.database = _DatabaseProxy()
 
@@ -658,7 +659,7 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, 17)
         credential_ctor.assert_called_once_with(client_id="client-1")
-        cosmos_ctor.assert_called_once_with(endpoint="https://cosmos.example.com", credential=fake_credential)
+        cosmos_ctor.assert_called_once_with("https://cosmos.example.com", credential=fake_credential)
         self.assertEqual(fake_cosmos_client.database_names, ["db-1"])
         self.assertEqual(fake_db_proxy.calls, ["container-1"])
         blob_ctor.assert_called_once_with("https://results.example.com/container", credential=fake_credential)
@@ -716,7 +717,7 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, 19)
         credential_ctor.assert_called_once_with(client_id="client-1")
-        cosmos_ctor.assert_called_once_with(endpoint="https://cosmos.example.com", credential=fake_credential)
+        cosmos_ctor.assert_called_once_with("https://cosmos.example.com", credential=fake_credential)
         self.assertEqual(fake_cosmos_client.database_names, ["db-1"])
         blob_ctor.assert_called_once_with("https://results.example.com/container", credential=fake_credential)
         http_ctor.assert_called_once_with()
