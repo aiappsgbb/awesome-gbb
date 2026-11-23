@@ -42,12 +42,19 @@ packages:
     source: pypi
     version: "2.1.0b1"
     upstream_changelog: https://pypi.org/project/azure-ai-agentserver-core/#history
-    notes: Exact beta pin required so uv admits the Agent Server 2.1 prerelease.
+    notes: |
+      Exact beta pin required so uv admits the Agent Server 2.1 prerelease
+      (MAF container profile). The resilient Responses profile pins GA
+      2.3.0 separately in references/python/resilience/requirements.txt
+      (KI-011); refresh both profiles independently.
   - name: azure-ai-agentserver-responses
     source: pypi
     version: "2.1.0b1"
     upstream_changelog: https://pypi.org/project/azure-ai-agentserver-responses/#history
-    notes: Exact beta pin paired with core 2.1.0b1 and hosting b260813.
+    notes: |
+      Exact beta pin paired with core 2.1.0b1 and hosting b260813 (MAF
+      container profile). The resilient Responses profile pins GA 2.4.0
+      separately (KI-011).
   - name: azure-ai-agentserver-invocations
     source: pypi
     version: "1.1.0b1"
@@ -102,6 +109,12 @@ docs_to_revalidate:
   - https://pypi.org/project/agent-framework-foundry-hosting/
   - https://pypi.org/project/azure-ai-projects/
   - https://pypi.org/project/mcp/
+  - https://learn.microsoft.com/azure/foundry/agents/concepts/long-running-agent-resilience
+  - https://learn.microsoft.com/azure/foundry/agents/how-to/recover-long-running-work
+  - https://learn.microsoft.com/azure/foundry/agents/how-to/stream-with-reconnect
+  - https://learn.microsoft.com/azure/foundry/agents/concepts/long-running-agent-reference
+  - https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/agentserver/azure-ai-agentserver-responses/docs/resilient-responses-developer-guide.md
+  - https://github.com/microsoft/copilot-sdk/blob/main/docs/integrations/microsoft-agent-framework.md
 
 known_issues:
   - id: KI-001
@@ -198,6 +211,29 @@ known_issues:
     description: agent-framework-foundry-hosting 1.0.0b260813 requires direct exact Agent Server core + Responses 2.1.0b1 and invocations 1.1.0b1 pins for uv prerelease admission, plus mcp>=1.24,<2.
     upstream_url: https://pypi.org/project/agent-framework-foundry-hosting/
     status: open
+  - id: KI-011
+    description: |
+      Crash-resilient Responses (resilient_background, checkpoints,
+      starting_after reconnect) is documented against GA
+      azure-ai-agentserver-core==2.3.0 + azure-ai-agentserver-responses==2.4.0,
+      a separate profile from the MAF hosting beta (Agent Server 2.1.0b1).
+      Learn Python snippets use ResponseEventStream.from_snapshot,
+      context.conversation_chain_metadata, context.is_shutting_down and
+      TaskContext.metadata, which these wheels do not expose. Without the
+      opt-in, a crashed stored background response stays in_progress (Learn
+      says it is marked failed).
+    upstream_url: https://learn.microsoft.com/azure/foundry/agents/how-to/recover-long-running-work
+    status: open
+    workaround_location: references/long-running-resilience.md
+  - id: KI-012
+    description: |
+      agent-framework-github-copilot requires github-copilot-sdk<2.0; both
+      github-copilot-sdk and microsoft-copilot-sdk install the `copilot`
+      import package. pip installs both without a resolver error, so the
+      last wheel silently wins. Keep MAF Copilot-provider apps on SDK 1.x.
+    upstream_url: https://github.com/microsoft/copilot-sdk/blob/main/docs/integrations/microsoft-agent-framework.md
+    status: open
+    workaround_location: SKILL.md § "Do not mix MAF Copilot adapters with Copilot SDK 2.0"
     workaround_location: SKILL.md § "Dependencies (pyproject.toml)"
 
 validation:
@@ -322,7 +358,7 @@ validation:
     issues = {issue["id"]: issue for issue in pin["known_issues"]}
     assert issues["KI-009"]["status"] == "open"
     assert issues["KI-010"]["status"] == "open"
-    assert pin["known_issues_count"] == 9
+    assert pin["known_issues_count"] == 11
     assert len(pin["known_issues"]) == pin["known_issues_count"]
 
     container_spec = importlib.util.spec_from_file_location(
@@ -379,16 +415,47 @@ validation:
     print("ok update_details")
     print("ok otel bundle")
     PY
+    deactivate
+
+    # KI-011: resilient Responses profile + local SIGKILL recovery test (no Azure).
+    REPO_ROOT="${PIN_VALIDATION_REPO_ROOT:-$PWD}"
+    python3 -m venv .venv-resilience
+    .venv-resilience/bin/pip install --quiet \
+      -r "$REPO_ROOT/skills/foundry-hosted-agents/references/python/resilience/requirements.txt"
+    .venv-resilience/bin/python -c "from importlib.metadata import version as v; assert v('azure-ai-agentserver-core') == '2.3.0' and v('azure-ai-agentserver-responses') == '2.4.0'; print('ok resilience pins')"
+    .venv-resilience/bin/python -m unittest discover \
+      -s "$REPO_ROOT/skills/foundry-hosted-agents/tests" -p 'test_resilient_recovery.py' -v
+    echo "ok resilient recovery test"
+
+    # KI-012: MAF Copilot adapter + Copilot SDK 2.0 overlap check.
+    python3 -m venv .venv-mix
+    .venv-mix/bin/pip install --quiet \
+      "agent-framework-github-copilot~=2.2.0" "microsoft-copilot-sdk~=2.0.1"
+    .venv-mix/bin/pip check
+    .venv-mix/bin/python - <<'PY'
+    from importlib.metadata import distribution, version
+    owners = [
+        name for name in ("github-copilot-sdk", "microsoft-copilot-sdk")
+        if any(str(f) == "copilot/__init__.py" for f in distribution(name).files or [])
+    ]
+    print("installed", version("github-copilot-sdk"), version("microsoft-copilot-sdk"))
+    assert version("github-copilot-sdk").startswith("1."), version("github-copilot-sdk")
+    assert owners == ["github-copilot-sdk", "microsoft-copilot-sdk"], owners
+    print("ok copilot import overlap detected")
+    PY
   expected_output:
     - "ok hosted profile and artifact provenance"
     - "ok canonical container import"
     - "ok hosted coherent stack"
     - "ok update_details"
     - "ok otel bundle"
+    - "ok resilience pins"
+    - "ok resilient recovery test"
+    - "ok copilot import overlap detected"
 
-last_validated: 2026-08-18
-validated_by: copilot-bot
-known_issues_count: 9
+last_validated: 2026-11-21
+validated_by: unsafecode
+known_issues_count: 11
 ---
 
 # Upstream pin — `foundry-hosted-agents` skill
