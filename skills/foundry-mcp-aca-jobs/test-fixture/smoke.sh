@@ -527,18 +527,29 @@ try:
     response = None
     last_error = None
     marker = "PROMPT_AGENT_MCP_PASS"
-    response = invoke_once(openai, "prompt", {
-        "conversation": conversation.id,
-        "extra_body": {"agent_reference": {"name": name, "type": "agent_reference"}},
-        "input": (
-            "Call start_aca_job with jobType short-job, idempotencyKey "
-            f"prompt-{os.environ['SUFFIX']}, inputRef "
-            f"{os.environ['MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'].rstrip('/')}/"
-            f"{os.environ['MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME']}/inputs/"
-            f"{marker}-{os.environ['SUFFIX']}.json, and callbackAlias ops. "
-            "Then call get_aca_job_status with the returned taskId."
-        ),
-    })
+    try:
+        response = invoke_once(openai, "prompt", {
+            "conversation": conversation.id,
+            "extra_body": {"agent_reference": {"name": name, "type": "agent_reference"}},
+            "input": (
+                "Call start_aca_job with jobType short-job, idempotencyKey "
+                f"prompt-{os.environ['SUFFIX']}, inputRef "
+                f"{os.environ['MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'].rstrip('/')}/"
+                f"{os.environ['MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME']}/inputs/"
+                f"{marker}-{os.environ['SUFFIX']}.json, and callbackAlias ops. "
+                "Then call get_aca_job_status with the returned taskId."
+            ),
+        })
+    except Exception:
+        # Diagnostics only (no replay): which MCP call failed and its public error.
+        try:
+            for item in openai.conversations.items.list(conversation_id=conversation.id):
+                if getattr(item, "type", None) == "mcp_call":
+                    print("PROMPT_MCP_CALL", getattr(item, "name", None),
+                          redact_error(str(getattr(item, "error", None)))[:400])
+        except Exception as exc:
+            print(f"NOTE conversation items unavailable: {type(exc).__name__}")
+        raise
     last_error_repr = redact_error(repr(last_error))
     assert response is not None, f"invoke never succeeded: {last_error_repr}"
     calls = [
