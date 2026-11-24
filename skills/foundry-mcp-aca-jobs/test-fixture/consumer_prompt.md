@@ -53,6 +53,11 @@ its own internal deadline and always writes the marker before it exits.
   fix or work around it. Diagnostics are already in the uploaded evidence file.
 - Wait for the Bash call with long reads (it can take 40–60 minutes); do not
   start other commands while it runs.
+- Never end your turn while the script is still running: ending the session
+  kills it and leaves no marker. If the Bash call returns before the script
+  exits, keep reading that same shell's output with the maximum delay, again
+  and again, until it reports completion. Your final action is reading the
+  marker file; only then may you stop.
 
 The script's `ERR` trap writes a deterministic FAIL marker for any unhandled
 hard abort; explicit preconditions write a more precise FAIL marker.

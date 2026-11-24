@@ -55,6 +55,10 @@ class JobsFixtureStabilityTests(unittest.TestCase):
         self.assertNotIn("```bash\nset -Eeuo pipefail", self.prompt)
         self.assertNotIn("az containerapp", self.prompt)
 
+    def test_prompt_forbids_ending_the_turn_before_the_marker(self):
+        self.assertIn("Never end your turn while the script is still running", self.prompt)
+        self.assertIn("Your final action is reading the\n  marker file", self.prompt)
+
     def test_script_has_internal_deadline_below_job_timeout(self):
         match = re.search(r'SMOKE_DEADLINE_SECONDS:-(\d+)', self.script)
         self.assertIsNotNone(match)
