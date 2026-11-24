@@ -476,6 +476,45 @@ PY
 
 ## Step 5 — prompt agent smoke
 
+# Agent grading: the closed start/status shapes never echo inputRef, so the
+# marker is proven through the worker's result for the chained taskId.
+cat > "$PROJECT_DIR/ci_agent_check.py" <<'PY'
+import json
+import os
+import time
+
+from azure.core.exceptions import ResourceNotFoundError
+from azure.storage.blob import BlobClient
+
+
+def verify_agent_calls(calls_by_name, marker, credential):
+    for item in calls_by_name.values():
+        assert getattr(item, "error", None) in (None, ""), "MCP call returned error"
+    started = json.loads(getattr(calls_by_name["start_aca_job"], "output", "") or "{}")
+    status = json.loads(getattr(calls_by_name["get_aca_job_status"], "output", "") or "{}")
+    task_id = started.get("taskId")
+    assert task_id and status.get("taskId") == task_id, "status call did not chain the start taskId"
+    url = (
+        f"{os.environ['MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'].rstrip('/')}/"
+        f"{os.environ['MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME']}/results/{task_id}/result.json"
+    )
+    blob = BlobClient.from_blob_url(url, credential=credential)
+    try:
+        for _ in range(60):
+            try:
+                result = json.loads(blob.download_blob().readall())
+                break
+            except ResourceNotFoundError:
+                time.sleep(5)
+        else:
+            raise AssertionError("agent task produced no result in 300 seconds")
+    finally:
+        blob.close()
+    assert result.get("taskId") == task_id, "result belongs to another task"
+    assert marker in result.get("inputPath", ""), "agent task did not use the marker inputRef"
+    return task_id
+PY
+
 (
 cd "$PROJECT_DIR"
 uv run --frozen --group fixture python - <<'PY'
@@ -569,14 +608,8 @@ try:
         "start_aca_job",
         "get_aca_job_status",
     }, f"required MCP calls missing; last_error={last_error_repr}"
-    for item in calls_by_name.values():
-        assert getattr(item, "error", None) in (
-            None,
-            "",
-        ), f"MCP call returned error; last_error={last_error_repr}"
-        assert marker in str(
-            getattr(item, "output", "")
-        ), f"MCP output missing marker; last_error={last_error_repr}"
+    from ci_agent_check import verify_agent_calls
+    verify_agent_calls(calls_by_name, marker, credential)
     print("PROMPT_AGENT_MCP_CALLS_VALID")
 finally:
     if version is not None:
@@ -1005,14 +1038,8 @@ assert set(calls_by_name) == {
     "start_aca_job",
     "get_aca_job_status",
 }, f"required MCP calls missing; last_error={last_error_repr}"
-for item in calls_by_name.values():
-    assert getattr(item, "error", None) in (
-        None,
-        "",
-    ), f"MCP call returned error; last_error={last_error_repr}"
-    assert marker in str(
-        getattr(item, "output", "")
-    ), f"MCP output missing marker; last_error={last_error_repr}"
+from ci_agent_check import verify_agent_calls
+verify_agent_calls(calls_by_name, marker, credential)
 project.close()
 credential.close()
 print("HOSTED_AGENT_MCP_CALLS_VALID")

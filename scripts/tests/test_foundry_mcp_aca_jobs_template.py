@@ -15,6 +15,7 @@ import subprocess
 import json
 import tempfile
 import tomllib
+import types
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -64,6 +65,37 @@ class JobsFixtureStabilityTests(unittest.TestCase):
 
     def test_failure_path_publishes_invoke_custody_records(self):
         self.assertIn('for record in "$PROJECT_DIR"/ci-*-operation.jsonl; do', self.script)
+
+    def test_agent_check_grades_chaining_and_marker_result(self):
+        text = self.script.split('cat > "$PROJECT_DIR/ci_agent_check.py" <<\'PY\'\n', 1)[1].split("\nPY\n", 1)[0]
+        module = types.ModuleType("ci_agent_check")
+        exec(compile(text, "ci_agent_check.py", "exec"), module.__dict__)
+
+        class Blob:
+            payload = None
+
+            @classmethod
+            def from_blob_url(cls, url, credential):
+                return cls()
+
+            def download_blob(self):
+                return types.SimpleNamespace(readall=lambda: json.dumps(Blob.payload).encode())
+
+            def close(self):
+                pass
+
+        module.BlobClient = Blob
+        call = lambda output: types.SimpleNamespace(error=None, output=json.dumps(output))
+        env = {"MCP_ACA_JOBS_STORAGE_ACCOUNT_URL": "https://st.example", "MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME": "out"}
+        good = {"start_aca_job": call({"taskId": "t1"}), "get_aca_job_status": call({"taskId": "t1"})}
+        with patch.dict(os.environ, env):
+            Blob.payload = {"taskId": "t1", "inputPath": "/out/inputs/MARK-s.json"}
+            self.assertEqual(module.verify_agent_calls(good, "MARK", None), "t1")
+            with self.assertRaisesRegex(AssertionError, "marker inputRef"):
+                module.verify_agent_calls(good, "OTHER", None)
+            broken = {"start_aca_job": call({"taskId": "t1"}), "get_aca_job_status": call({"taskId": "t2"})}
+            with self.assertRaisesRegex(AssertionError, "chain"):
+                module.verify_agent_calls(broken, "MARK", None)
 
     def test_hosted_deploy_retry_is_bounded_and_404_only(self):
         self.assertIn("for attempt in 1 2 3; do", self.script)
@@ -1096,14 +1128,14 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         for call_set in call_sets:
             self.assertIn('"start_aca_job"', call_set)
             self.assertIn('"get_aca_job_status"', call_set)
-        self.assertEqual(
-            fixture.count('getattr(item, "error", None) in ('),
-            2,
-        )
-        self.assertEqual(
-            fixture.count("assert marker in str("),
-            2,
-        )
+        # Closed start/status shapes never echo inputRef (#488): both agent smokes
+        # grade call errors, taskId chaining and the worker result for that task.
+        self.assertEqual(fixture.count("from ci_agent_check import verify_agent_calls"), 2)
+        self.assertIn('assert getattr(item, "error", None) in (None, ""), "MCP call returned error"', fixture)
+        self.assertIn('status.get("taskId") == task_id', fixture)
+        self.assertIn("/results/{task_id}/result.json", fixture)
+        self.assertIn('assert marker in result.get("inputPath", "")', fixture)
+        self.assertNotIn("assert marker in str(", fixture)
         self.assertNotIn('assert "start_aca_job" in evidence', fixture)
         self.assertNotIn('assert "get_aca_job_status" in evidence', fixture)
 
@@ -1159,7 +1191,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             fixture.count('assert response is not None, f"invoke never succeeded: {last_error_repr}"'),
             2,
         )
-        self.assertEqual(fixture.count("last_error={last_error_repr}"), 6)
+        self.assertEqual(fixture.count("last_error={last_error_repr}"), 2)
         self.assertIn("<redacted-bearer>", fixture)
         self.assertIn("<redacted-jwt>", fixture)
 
