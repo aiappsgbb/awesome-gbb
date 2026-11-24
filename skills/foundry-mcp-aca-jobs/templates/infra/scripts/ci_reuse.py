@@ -51,7 +51,7 @@ VERSIONS = {"group": "2022-09-01", "environment": "2024-03-01",
             "cosmos": "2024-11-15", "storage": "2023-01-01", "registry": "2025-11-01"}
 JOB_ACTIONS = {"Microsoft.App/jobs/read", "Microsoft.App/jobs/start/action",
                "Microsoft.App/jobs/execution/read", "Microsoft.App/jobs/executions/read",
-               "Microsoft.App/jobs/stop/execution/action"}
+               "Microsoft.App/jobs/stop/execution/action", "Microsoft.App/jobs/executions/*"}
 BUILTIN_ROLES = {
     "Contributor": "b24988ac-6180-42a0-ab88-20f7382dd24c",
     "AcrPull": "7f951dda-4ed3-4680-a7ca-43fe172d538d",
@@ -137,6 +137,9 @@ ACR_ABSENT = r"manifest unknown|name unknown|the specified tag does not exist"
 def not_found(args, stderr):
     if re.search(r'"code"\s*:\s*"(' + ABSENT_CODES + r')"|\((' + ABSENT_CODES + r')\)', stderr):
         return True
+    if args[:2] == ["acr", "repository"]:
+        # az acr repository show: `Error: repository "<name>" is not found.`
+        return re.search(r'repository "[^"]+" is not found|\bNAME_UNKNOWN\b', stderr) is not None
     return args[:2] == ["acr", "manifest"] and re.search(
         r"\b(MANIFEST_UNKNOWN|NAME_UNKNOWN)\b|" + ACR_ABSENT, stderr, re.IGNORECASE) is not None
 
@@ -475,16 +478,27 @@ def cleanup(config, manifest, created):
             raise ReuseError("CLEANUP_ABSENCE_UNVERIFIED")
 
 
-def cleanup_image(config, image, *, hosted=False):
+def cleanup_image(config, image, *, hosted=False, run_owned_repositories=()):
     require(image.get("repository") == image_repository(config, hosted)
             and re.fullmatch(r"sha256:[0-9a-f]{64}", image.get("digest", "")), "IMAGE_OWNERSHIP_MANIFEST")
+    registry = config["registry"].rsplit("/", 1)[1]
     actual = image_metadata(config, absent=True, hosted=hosted)
-    if actual is None:
+    if actual is not None:
+        require(actual.get("digest") == image["digest"] and actual.get("tags") == ["run"], "IMAGE_CHANGED")
+        cli(config, ["acr", "repository", "delete", "--name", registry,
+                     "--image", image["repository"] + "@" + image["digest"], "--yes"])
+        require(image_metadata(config, absent=True, hosted=hosted) is None, "IMAGE_ABSENCE_UNVERIFIED")
+    # The run-unique repository was recorded absent before the run; remove the
+    # untagged manifests a deploy can leave behind, never a tagged or shared one (#488).
+    if image["repository"] not in run_owned_repositories:
         return
-    require(actual.get("digest") == image["digest"] and actual.get("tags") == ["run"], "IMAGE_CHANGED")
-    cli(config, ["acr", "repository", "delete", "--name", config["registry"].rsplit("/", 1)[1],
-                 "--image", image["repository"] + "@" + image["digest"], "--yes"])
-    require(image_metadata(config, absent=True, hosted=hosted) is None, "IMAGE_ABSENCE_UNVERIFIED")
+    show = ["acr", "repository", "show", "--name", registry, "--repository", image["repository"]]
+    if cli(config, show, absent=True) is None:
+        return
+    tags = cli(config, ["acr", "repository", "show-tags", "--name", registry, "--repository", image["repository"]])
+    require(not tags, "IMAGE_REPOSITORY_STILL_TAGGED")
+    cli(config, ["acr", "repository", "delete", "--name", registry, "--repository", image["repository"], "--yes"])
+    require(cli(config, show, absent=True) is None, "IMAGE_REPOSITORY_ABSENCE_UNVERIFIED")
 
 
 def invoke_once(client, kind, options):
@@ -499,13 +513,34 @@ def invoke_once(client, kind, options):
             output.flush()
             os.fsync(output.fileno())
         begin_operation(record, target=str(client.base_url), intent={"kind": kind, "options": options})
-        try:
-            bounded = client.with_options(max_retries=0, timeout=180)
-            raw = bounded.responses.with_raw_response.create(**options)
-            return capture_response(raw, record)
-        except Exception as error:
-            record("unresolved", error_metadata(error))
-            raise ReuseError("INVOKE_OUTCOME_UNKNOWN_NO_REPLAY") from None
+        bounded = client.with_options(max_retries=0, timeout=180)
+        for attempt in range(1, INVOKE_RATE_LIMIT_ATTEMPTS + 1):
+            try:
+                raw = bounded.responses.with_raw_response.create(**options)
+                return capture_response(raw, record)
+            except Exception as error:
+                # Only an explicit 429 is replayed, bounded: the service declined the
+                # request, and the prompt carries the same idempotencyKey, so the MCP
+                # start dedups even if a tool already ran (#488). Anything else is
+                # unresolved and never replayed.
+                if getattr(error, "status_code", None) == 429 and attempt < INVOKE_RATE_LIMIT_ATTEMPTS:
+                    record("rate-limited", {**error_metadata(error), "attempt": attempt})
+                    time.sleep(_retry_after_seconds(error, attempt))
+                    continue
+                record("unresolved", error_metadata(error))
+                raise ReuseError("INVOKE_OUTCOME_UNKNOWN_NO_REPLAY") from None
+
+
+INVOKE_RATE_LIMIT_ATTEMPTS = 5
+
+
+def _retry_after_seconds(error, attempt):
+    headers = getattr(getattr(error, "response", None), "headers", None) or {}
+    try:
+        seconds = float(headers.get("retry-after", ""))
+    except (TypeError, ValueError):
+        seconds = 20.0 * attempt
+    return max(1.0, min(seconds, 60.0))
 
 
 def main():
@@ -547,7 +582,8 @@ def main():
                         rid, version = owned(config)[key]
                         require(get(config, rid, version, absent=True) is None, "IMAGE_STILL_DEPLOYED")
                     cleanup_image(config, load(args.project / ("ci-hosted-image.json" if args.hosted_image else "ci-image.json")),
-                                  hosted=args.hosted_image)
+                                  hosted=args.hosted_image,
+                                  run_owned_repositories=manifest.get("image_repositories_absent_before", []))
                 else:
                     cleanup(config, manifest, load(args.project / "ci-created.json"))
     except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as error:

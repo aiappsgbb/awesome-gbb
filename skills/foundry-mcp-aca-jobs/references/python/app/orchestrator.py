@@ -209,6 +209,11 @@ class Orchestrator:
                 with self._telemetry.operation("aca.stop", self._telemetry_attributes(task, "aca.stop")):
                     await self._jobs.stop(job_policy, task.aca_execution_id)
             except PublicError as error:
+                # Idempotent cancel: the worker may have finished between the read and
+                # the stop, and ARM then rejects stopping the completed execution (#488).
+                current = await self._store.get(owner_scope, task_id)
+                if current.lifecycle_state in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}:
+                    return current
                 if error.code in {"ARM_STATUS_UNAVAILABLE", "ARM_STOP_REJECTED"}:
                     return task
                 if error.code == "DEPLOYMENT_CONTRACT_MISMATCH":

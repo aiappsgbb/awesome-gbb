@@ -15,6 +15,7 @@ import subprocess
 import json
 import tempfile
 import tomllib
+import types
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -27,11 +28,103 @@ from azure.mgmt.appcontainers.models import EnvironmentVar as AcaEnvironmentVar
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SKILL = ROOT / "skills" / "foundry-mcp-aca-jobs"
+
+
+def _jobs_fixture_text(encoding: str = "utf-8") -> str:
+    """The consumer prompt plus the tracked smoke script it runs."""
+    fixture = SKILL / "test-fixture"
+    return (fixture / "consumer_prompt.md").read_text(encoding=encoding) + "\n" + (
+        fixture / "smoke.sh"
+    ).read_text(encoding=encoding)
 SKILL_DIR = SKILL / "references" / "python"
 sys.path.insert(0, str(SKILL_DIR))
 _install_stubs()
 
 from app.models import Policy
+
+
+class JobsFixtureStabilityTests(unittest.TestCase):
+    """#488: the CI agent runs a tracked script once and cannot run to the job timeout."""
+
+    def setUp(self):
+        self.prompt = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(encoding="utf-8")
+        self.script = (SKILL / "test-fixture" / "smoke.sh").read_text(encoding="utf-8")
+
+    def test_prompt_runs_the_tracked_script_once_without_inline_code(self):
+        self.assertIn("bash skills/foundry-mcp-aca-jobs/test-fixture/smoke.sh", self.prompt)
+        self.assertNotIn("```bash\nset -Eeuo pipefail", self.prompt)
+        self.assertNotIn("az containerapp", self.prompt)
+
+    def test_prompt_forbids_ending_the_turn_before_the_marker(self):
+        self.assertIn("Never end your turn while the script is still running", self.prompt)
+        self.assertIn("Your final action is reading the\n  marker file", self.prompt)
+
+    def test_script_has_internal_deadline_below_job_timeout(self):
+        match = re.search(r'SMOKE_DEADLINE_SECONDS:-(\d+)', self.script)
+        self.assertIsNotNone(match)
+        self.assertLess(int(match.group(1)) + 900, 120 * 60)
+        self.assertIn("timeout --kill-after=900", self.script)
+        self.assertIn("SMOKE_RESULT=FAIL internal deadline", self.script)
+        self.assertIn("trap 'exit 143' TERM", self.script)
+
+    def test_failure_path_publishes_invoke_custody_records(self):
+        self.assertIn('for record in "$PROJECT_DIR"/ci-*-operation.jsonl; do', self.script)
+
+    def test_agent_check_grades_chaining_and_marker_result(self):
+        text = self.script.split('cat > "$PROJECT_DIR/ci_agent_check.py" <<\'PY\'\n', 1)[1].split("\nPY\n", 1)[0]
+        module = types.ModuleType("ci_agent_check")
+        exec(compile(text, "ci_agent_check.py", "exec"), module.__dict__)
+
+        class Blob:
+            payload = None
+
+            @classmethod
+            def from_blob_url(cls, url, credential):
+                return cls()
+
+            def download_blob(self):
+                return types.SimpleNamespace(readall=lambda: json.dumps(Blob.payload).encode())
+
+            def close(self):
+                pass
+
+        module.BlobClient = Blob
+        call = lambda output: types.SimpleNamespace(error=None, output=json.dumps(output) + "\n" + json.dumps(output))
+        env = {"MCP_ACA_JOBS_STORAGE_ACCOUNT_URL": "https://st.example", "MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME": "out"}
+        good = {"start_aca_job": call({"taskId": "t1"}), "get_aca_job_status": call({"taskId": "t1"})}
+        with patch.dict(os.environ, env):
+            Blob.payload = {"taskId": "t1", "inputPath": "/out/inputs/MARK-s.json"}
+            self.assertEqual(module.verify_agent_calls(good, "MARK", None), "t1")
+            with self.assertRaisesRegex(AssertionError, "marker inputRef"):
+                module.verify_agent_calls(good, "OTHER", None)
+            broken = {"start_aca_job": call({"taskId": "t1"}), "get_aca_job_status": call({"taskId": "t2"})}
+            with self.assertRaisesRegex(AssertionError, "chain"):
+                module.verify_agent_calls(broken, "MARK", None)
+
+    def test_hosted_invoke_waits_for_restarted_mcp_app(self):
+        tail = self.script.split("az containerapp revision restart", 1)[1]
+        restart_wait, hosted = tail.split('"## Step 6', 1)[0], tail
+        self.assertLess(hosted.index("MCP_APP_READY_AFTER_RESTART"), hosted.index('invoke_once(openai, "hosted"'))
+        self.assertIn("no new running MCP replica after revision restart", restart_wait)
+        self.assertIn("for attempt in $(seq 1 36); do", restart_wait)
+        self.assertIn("for _ in range(24):", restart_wait)
+
+    def test_failure_path_removes_owned_hosted_agent_and_image(self):
+        failure_path = self.script.split("cleanup_on_failure() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn('-f "$PROJECT_DIR/ci-hosted-owned.json" && ! -f "$PROJECT_DIR/ci-hosted-deleted.json"', failure_path)
+        self.assertIn("delete_hosted_agent ||", failure_path)
+        self.assertIn("cleanup-image --hosted-image", failure_path)
+        self.assertEqual(self.script.count('project.agents.delete(agent_name=owned["name"], force=True)'), 1)
+
+    def test_hosted_deploy_retry_is_bounded_and_404_only(self):
+        self.assertIn("for attempt in 1 2 3; do", self.script)
+        self.assertIn("grep -Eq '\\b404\\b|NotFound|Not Found'", self.script)
+
+    def test_hosted_teardown_deletes_owned_agent_with_force_and_bounded_retry(self):
+        self.assertIn('project.agents.delete(agent_name=owned["name"], force=True)', self.script)
+        self.assertNotIn('delete_version(owned["name"]', self.script)
+        self.assertIn("for attempt in range(6):", self.script)
+        self.assertIn("HOSTED_AGENT_ABSENCE_VERIFIED", self.script)
 
 
 class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
@@ -387,7 +480,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "3.0.0")
+        self.assertEqual(skill_fm["metadata"]["version"], "3.1.0")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -781,7 +874,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )
 
     def test_relocated_template_layout_compiles_with_canonical_job_module(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+        fixture = _jobs_fixture_text(
             encoding="utf-8"
         )
         self.assertIn(
@@ -940,7 +1033,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )
         self.assertEqual(parameters["resourceGroupTags"]["value"], {})
 
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+        fixture = _jobs_fixture_text(
             encoding="utf-8"
         )
         self.assertNotIn('az group create --name "$CHILD_RG"', fixture)
@@ -1019,7 +1112,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                         self.assertIn('hash = "sha256:', line)
 
     def test_fixture_documents_standing_blob_role_without_regranting(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+        fixture = _jobs_fixture_text(
             encoding="utf-8"
         )
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
@@ -1036,7 +1129,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertNotIn("az role assignment create", prerequisite)
 
     def test_agent_smokes_grade_actual_mcp_call_outputs(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+        fixture = _jobs_fixture_text(
             encoding="utf-8"
         )
         self.assertEqual(
@@ -1054,19 +1147,19 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         for call_set in call_sets:
             self.assertIn('"start_aca_job"', call_set)
             self.assertIn('"get_aca_job_status"', call_set)
-        self.assertEqual(
-            fixture.count('getattr(item, "error", None) in ('),
-            2,
-        )
-        self.assertEqual(
-            fixture.count("assert marker in str("),
-            2,
-        )
+        # Closed start/status shapes never echo inputRef (#488): both agent smokes
+        # grade call errors, taskId chaining and the worker result for that task.
+        self.assertEqual(fixture.count("from ci_agent_check import verify_agent_calls"), 2)
+        self.assertIn('assert getattr(item, "error", None) in (None, ""), "MCP call returned error"', fixture)
+        self.assertIn('status.get("taskId") == task_id', fixture)
+        self.assertIn("/results/{task_id}/result.json", fixture)
+        self.assertIn('assert marker in result.get("inputPath", "")', fixture)
+        self.assertNotIn("assert marker in str(", fixture)
         self.assertNotIn('assert "start_aca_job" in evidence', fixture)
         self.assertNotIn('assert "get_aca_job_status" in evidence', fixture)
 
     def test_legacy_fallback_reads_public_status_field(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+        fixture = _jobs_fixture_text(
             encoding="utf-8"
         )
         fallback = fixture.split("    fallback = dict(request)", 1)[1].split(
@@ -1077,7 +1170,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertNotIn('cancelled["lifecycleState"]', fallback)
 
     def test_agent_smoke_input_refs_are_uploaded_before_invocation(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+        fixture = _jobs_fixture_text(
             encoding="utf-8"
         )
         upload_step = fixture.split(
@@ -1105,7 +1198,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )
 
     def test_agent_smoke_retries_report_redacted_last_exception(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+        fixture = _jobs_fixture_text(
             encoding="utf-8"
         )
         self.assertEqual(fixture.count("last_error = None"), 2)
@@ -1117,12 +1210,12 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             fixture.count('assert response is not None, f"invoke never succeeded: {last_error_repr}"'),
             2,
         )
-        self.assertEqual(fixture.count("last_error={last_error_repr}"), 6)
+        self.assertEqual(fixture.count("last_error={last_error_repr}"), 2)
         self.assertIn("<redacted-bearer>", fixture)
         self.assertIn("<redacted-jwt>", fixture)
 
     def test_fixture_captures_and_checks_exact_deployment_verifier_markers(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+        fixture = _jobs_fixture_text(
             encoding="utf-8"
         )
         self.assertIn('verifier_output="$(', fixture)
@@ -1136,7 +1229,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )
 
     def test_static_mcp_bearers_are_marked_smoke_only(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+        fixture = _jobs_fixture_text(
             encoding="utf-8"
         )
         self.assertEqual(
@@ -1223,7 +1316,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 )
 
     def test_live_fixture_contract_requires_deterministic_bash_only_azure_smoke(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(encoding="utf-8")
+        fixture = _jobs_fixture_text(encoding="utf-8")
         normalized = " ".join(fixture.split())
         marker = "/tmp/foundry-mcp-aca-jobs-smoke-result"
         shared_rg = "rg-awesome-gbb-ci"
@@ -1325,9 +1418,11 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("MCPTool(", fixture)
         self.assertIn("authorization=access_token", fixture)
         self.assertEqual(
-            fixture.count('headers={"Authorization": "Bearer " + access_token}'),
+            fixture.count('headers={"Authorization": "Bearer " + access_token, "X-MCP-Task-Mode": "inline"}'),
             1,
         )
+        # Both Foundry agent tools opt out of task handles they cannot consume (#488).
+        self.assertEqual(fixture.count('"X-MCP-Task-Mode": "inline"'), 2)
         self.assertNotIn('headers={"Authorization": f"Bearer {access_token}"}', fixture)
         self.assertIn("project.agents.create_version(", fixture)
         self.assertIn("openai.conversations.create()", fixture)
@@ -1383,7 +1478,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             compile(source, f"<consumer_prompt heredoc {index}>", "exec")
 
     def test_hosted_agent_instance_identity_is_added_to_easy_auth_allowlist(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+        fixture = _jobs_fixture_text(
             encoding="utf-8"
         )
         normalized = " ".join(fixture.split())
@@ -1644,7 +1739,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     def test_fixture_resolves_ci_uami_principal_through_arm_before_single_azd_up(
         self,
     ) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+        fixture = _jobs_fixture_text(
             encoding="utf-8"
         )
         normalized = " ".join(fixture.split())
@@ -1687,7 +1782,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     def test_fixture_restarts_active_revisions_after_auth_put_before_invoke(
         self,
     ) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+        fixture = _jobs_fixture_text(
             encoding="utf-8"
         )
         update = fixture.index("--method put")
@@ -2155,6 +2250,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 "Microsoft.App/jobs/execution/read",
                 "Microsoft.App/jobs/executions/read",
                 "Microsoft.App/jobs/stop/execution/action",
+                "Microsoft.App/jobs/executions/*",
             },
         )
 
@@ -2164,6 +2260,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "Microsoft.App/jobs/execution/read",
             "Microsoft.App/jobs/executions/read",
             "Microsoft.App/jobs/stop/execution/action",
+            "Microsoft.App/jobs/executions/*",
         ):
             self.assertIn(action, job_role)
         self.assertIn("ba92f5b4-2d11-453d-a403-e96b0029c9fe", identity + "\n" + assignments)
@@ -2775,7 +2872,7 @@ param callbackConfig = {{
             main_bicep,
         )
 
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+        fixture = _jobs_fixture_text(
             encoding="utf-8"
         )
         for alias in (

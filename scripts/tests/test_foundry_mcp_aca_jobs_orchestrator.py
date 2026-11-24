@@ -999,6 +999,45 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(cancelled.cancellation_requested_at)
         self.jobs.stop.assert_awaited_once_with(self.policy.job("import"), "exec-1")
 
+    async def test_cancel_is_idempotent_when_worker_finished_before_stop(self) -> None:
+        # #488: the worker completed between cancel's read and the ARM stop,
+        # which then failed; cancel must return the terminal task, not an error.
+        store = InMemoryControlStore()
+        orchestrator = self._orchestrator(store)
+        self.jobs.start.return_value = self._make_execution(
+            execution_id="exec-1",
+            status="Running",
+            start_time=self.fixed_now,
+            task_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{self.owner_scope}:import:")),
+        )
+        created = await orchestrator.start(self.request, self.owner_scope)
+        task_id = str(created.task_id)
+
+        finished = {"value": False}
+        real_get = store.get
+
+        async def get(owner_scope, task_id_):
+            current = await real_get(owner_scope, task_id_)
+            if finished["value"] and task_id_ == task_id:
+                return current.model_copy(update={"lifecycle_state": LifecycleState.SUCCEEDED})
+            return current
+
+        store.get = get
+
+        async def finish_then_fail(policy, execution_id):
+            finished["value"] = True
+            raise PublicError("TASK_NOT_FOUND", "task not found")
+
+        self.jobs.stop.side_effect = finish_then_fail
+        cancelled = await orchestrator.cancel(self.owner_scope, task_id)
+        self.assertEqual(cancelled.lifecycle_state, LifecycleState.SUCCEEDED)
+
+        # A still-running execution keeps surfacing a real stop denial.
+        self.jobs.stop.side_effect = PublicError("TASK_FORBIDDEN", "task forbidden")
+        finished["value"] = False
+        with self.assertRaises(PublicError):
+            await orchestrator.cancel(self.owner_scope, task_id)
+
     async def test_cancel_uncertain_start_reconciles_only_to_stop(self) -> None:
         store = InMemoryControlStore()
         orchestrator = self._orchestrator(store)
