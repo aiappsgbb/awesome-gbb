@@ -1121,21 +1121,29 @@ project = AIProjectClient(
 name = os.environ["HOSTED_NAME"]
 from infra.scripts.ci_reuse import invoke_once
 
-project.agents.update_details(
-    agent_name=name,
-    agent_endpoint=AgentEndpointConfig(
-        version_selector=VersionSelector(
-            version_selection_rules=[
-                FixedRatioVersionSelectionRule(
-                    agent_version="1", traffic_percentage=100
-                )
-            ]
-        ),
-        protocol_configuration=ProtocolConfiguration(
-            responses=ResponsesProtocolConfiguration()
-        ),
+hosted_endpoint = AgentEndpointConfig(
+    version_selector=VersionSelector(
+        version_selection_rules=[
+            FixedRatioVersionSelectionRule(
+                agent_version="1", traffic_percentage=100
+            )
+        ]
+    ),
+    protocol_configuration=ProtocolConfiguration(
+        responses=ResponsesProtocolConfiguration()
     ),
 )
+# Idempotent configuration write: retry only connection-level failures (#488).
+from azure.core.exceptions import ServiceRequestError
+for attempt in range(1, 6):
+    try:
+        project.agents.update_details(agent_name=name, agent_endpoint=hosted_endpoint)
+        break
+    except ServiceRequestError:
+        if attempt == 5:
+            raise
+        print(f"NOTE hosted endpoint update connection retry {attempt}")
+        time.sleep(10)
 openai = project.get_openai_client(agent_name=name)
 response = None
 last_error = None
