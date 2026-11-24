@@ -62,14 +62,79 @@ cleanup_on_failure() {
     { echo "== $(basename "$record") =="; cat "$record"; } | redact >> "$EVIDENCE"
   done
   local helper="$PROJECT_DIR/infra/scripts/ci_reuse.py"
+  if [[ -f "$PROJECT_DIR/ci-hosted-owned.json" && ! -f "$PROJECT_DIR/ci-hosted-deleted.json" ]]; then
+    delete_hosted_agent || echo "NOTE failure-path hosted agent cleanup incomplete"
+  elif [[ -f "$PROJECT_DIR/ci-hosted-intent.json" && ! -f "$PROJECT_DIR/ci-hosted-owned.json" ]]; then
+    echo "NOTE hosted agent ${HOSTED_NAME:-} may be a residual (no recorded creation identity)"
+  fi
   [[ -f "$PROJECT_DIR/ci-created.json" ]] || python3 "$helper" record --project "$PROJECT_DIR"
   if python3 "$helper" cleanup --project "$PROJECT_DIR" --execute; then
     [[ ! -f "$PROJECT_DIR/ci-image.json" ]] ||
       python3 "$helper" cleanup-image --project "$PROJECT_DIR" --execute
+    [[ ! -f "$PROJECT_DIR/ci-hosted-image.json" || ! -f "$PROJECT_DIR/ci-hosted-deleted.json" ]] ||
+      python3 "$helper" cleanup-image --hosted-image --project "$PROJECT_DIR" --execute
     echo "NOTE failure-path run-owned cleanup attempted; see output above"
   else
     echo "NOTE failure-path cleanup incomplete; report run-owned residuals"
   fi
+}
+# Run-owned hosted agent teardown (Step 7 and failure path); gated on the
+# recorded pre-run absence and creation identity.
+delete_hosted_agent() {
+(
+cd "$PROJECT_DIR"
+uv run --frozen --group fixture python - <<'PY'
+import os
+
+from azure.ai.projects import AIProjectClient
+from azure.core.exceptions import ResourceNotFoundError
+from azure.identity import DefaultAzureCredential
+
+with DefaultAzureCredential() as credential, AIProjectClient(
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential,
+    retry_total=0, connection_timeout=10, read_timeout=30,
+) as project:
+    from pathlib import Path
+    from infra.scripts.ci_reuse import load, write_new
+    intent = load(Path("ci-hosted-intent.json"))
+    owned = load(Path("ci-hosted-owned.json"))
+    assert intent == {"name": os.environ["HOSTED_NAME"], "absent_before": True}
+    assert owned["name"] == intent["name"]
+    import time
+    from azure.core.exceptions import HttpResponseError
+    version = project.agents.get_version(agent_name=owned["name"], agent_version=owned["version"])
+    assert str(version.created_at) == owned["created_at"], "Hosted resource was replaced"
+    # The agent was absent before this run, so the whole agent is run-owned.
+    # Deleting it with force=True terminates active sessions; deleting only the
+    # version fails while a session is active (#488). Bounded: 6 x 20 s, 12 x 10 s.
+    absent = False
+    for attempt in range(6):
+        try:
+            project.agents.delete(agent_name=owned["name"], force=True)
+        except ResourceNotFoundError:
+            pass
+        except HttpResponseError as error:
+            status = error.status_code or 0
+            if status not in (409, 429) and status < 500:
+                raise
+            print(f"NOTE hosted delete attempt {attempt + 1} deferred: HTTP {status}")
+            time.sleep(20)
+            continue
+        for _ in range(12):
+            try:
+                project.agents.get(agent_name=owned["name"])
+            except ResourceNotFoundError:
+                absent = True
+                break
+            time.sleep(10)
+        if absent:
+            break
+    if not absent:
+        raise RuntimeError("Owned hosted agent still present; cleanup incomplete")
+    write_new(Path("ci-hosted-deleted.json"), {"name": owned["name"], "version": owned["version"], "absent": True})
+    print("HOSTED_AGENT_ABSENCE_VERIFIED")
+PY
+)
 }
 trap cleanup_on_failure EXIT
 
@@ -1115,60 +1180,7 @@ PY
 python3 "$PROJECT_DIR/infra/scripts/ci_reuse.py" cleanup \
   --project "$PROJECT_DIR" --execute || fail "run-owned cleanup incomplete"
 
-(
-cd "$PROJECT_DIR"
-uv run --frozen --group fixture python - <<'PY'
-import os
-
-from azure.ai.projects import AIProjectClient
-from azure.core.exceptions import ResourceNotFoundError
-from azure.identity import DefaultAzureCredential
-
-with DefaultAzureCredential() as credential, AIProjectClient(
-    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential,
-    retry_total=0, connection_timeout=10, read_timeout=30,
-) as project:
-    from pathlib import Path
-    from infra.scripts.ci_reuse import load, write_new
-    intent = load(Path("ci-hosted-intent.json"))
-    owned = load(Path("ci-hosted-owned.json"))
-    assert intent == {"name": os.environ["HOSTED_NAME"], "absent_before": True}
-    assert owned["name"] == intent["name"]
-    import time
-    from azure.core.exceptions import HttpResponseError
-    version = project.agents.get_version(agent_name=owned["name"], agent_version=owned["version"])
-    assert str(version.created_at) == owned["created_at"], "Hosted resource was replaced"
-    # The agent was absent before this run, so the whole agent is run-owned.
-    # Deleting it with force=True terminates active sessions; deleting only the
-    # version fails while a session is active (#488). Bounded: 6 x 20 s, 12 x 10 s.
-    absent = False
-    for attempt in range(6):
-        try:
-            project.agents.delete(agent_name=owned["name"], force=True)
-        except ResourceNotFoundError:
-            pass
-        except HttpResponseError as error:
-            status = error.status_code or 0
-            if status not in (409, 429) and status < 500:
-                raise
-            print(f"NOTE hosted delete attempt {attempt + 1} deferred: HTTP {status}")
-            time.sleep(20)
-            continue
-        for _ in range(12):
-            try:
-                project.agents.get(agent_name=owned["name"])
-            except ResourceNotFoundError:
-                absent = True
-                break
-            time.sleep(10)
-        if absent:
-            break
-    if not absent:
-        raise RuntimeError("Owned hosted agent still present; cleanup incomplete")
-    write_new(Path("ci-hosted-deleted.json"), {"name": owned["name"], "version": owned["version"], "absent": True})
-    print("HOSTED_AGENT_ABSENCE_VERIFIED")
-PY
-) || fail "hosted-agent cleanup not verified"
+delete_hosted_agent || fail "hosted-agent cleanup not verified"
 
 # Preserve ci-run-owned.json/ci-created.json and all original operation receipts.
 # Native hosted agent and the exact ACR image digest require their own recorded

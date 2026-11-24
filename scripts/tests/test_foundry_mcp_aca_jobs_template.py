@@ -105,6 +105,13 @@ class JobsFixtureStabilityTests(unittest.TestCase):
         self.assertIn("for attempt in $(seq 1 36); do", restart_wait)
         self.assertIn("for _ in range(24):", restart_wait)
 
+    def test_failure_path_removes_owned_hosted_agent_and_image(self):
+        failure_path = self.script.split("cleanup_on_failure() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn('-f "$PROJECT_DIR/ci-hosted-owned.json" && ! -f "$PROJECT_DIR/ci-hosted-deleted.json"', failure_path)
+        self.assertIn("delete_hosted_agent ||", failure_path)
+        self.assertIn("cleanup-image --hosted-image", failure_path)
+        self.assertEqual(self.script.count('project.agents.delete(agent_name=owned["name"], force=True)'), 1)
+
     def test_hosted_deploy_retry_is_bounded_and_404_only(self):
         self.assertIn("for attempt in 1 2 3; do", self.script)
         self.assertIn("grep -Eq '\\b404\\b|NotFound|Not Found'", self.script)
