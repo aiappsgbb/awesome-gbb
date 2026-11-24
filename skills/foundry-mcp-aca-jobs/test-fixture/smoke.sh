@@ -956,6 +956,15 @@ for attempt in $(seq 1 6); do
 done
 test -n "$ACTIVE_REVISIONS" ||
   fail "active Container App revision lookup failed after 6 attempts"
+running_replicas() {
+  local revision
+  while IFS= read -r revision; do
+    test -n "$revision" || continue
+    az containerapp replica list --resource-group "$CHILD_RG" --name "$APP_NAME" \
+      --revision "$revision" --query "[?properties.runningState=='Running'].name" --output tsv
+  done <<<"$ACTIVE_REVISIONS"
+}
+OLD_REPLICAS="$(running_replicas || true)"
 while IFS= read -r revision; do
   test -n "$revision" || continue
   REVISION_RESTARTED=false
@@ -972,6 +981,50 @@ while IFS= read -r revision; do
   [[ "$REVISION_RESTARTED" == true ]] ||
     fail "active Container App revision restart failed after 6 attempts"
 done <<<"$ACTIVE_REVISIONS"
+
+# The restart is asynchronous: invoking the hosted agent before a new replica
+# serves authenticated MCP makes the agent fail with server_error (#488).
+REPLICA_REPLACED=false
+for attempt in $(seq 1 36); do
+  NEW_REPLICAS="$(running_replicas | grep -vxF -e "${OLD_REPLICAS:-<none>}" || true)"
+  if [[ -n "$NEW_REPLICAS" ]]; then
+    REPLICA_REPLACED=true
+    break
+  fi
+  sleep 5
+done
+[[ "$REPLICA_REPLACED" == true ]] ||
+  fail "no new running MCP replica after revision restart"
+(
+cd "$PROJECT_DIR"
+uv run --frozen --group fixture python - <<'PY'
+import asyncio
+import os
+
+from azure.identity import DefaultAzureCredential
+from fastmcp import Client
+
+with DefaultAzureCredential() as credential:
+    token = credential.get_token(f"api://{os.environ['MCP_AUTH_APP_CLIENT_ID']}/.default").token
+
+
+async def wait_ready():
+    for _ in range(24):
+        try:
+            async with Client(os.environ["MCP_URL"], mode="legacy", extensions=[], auth=token, timeout=30) as client:
+                if "start_aca_job" in {tool.name for tool in await client.list_tools()}:
+                    print("MCP_APP_READY_AFTER_RESTART")
+                    return
+        except Exception as exc:
+            print(f"NOTE MCP app not ready yet: {type(exc).__name__}")
+        await asyncio.sleep(5)
+    raise RuntimeError("MCP app not ready after revision restart")
+
+
+asyncio.run(wait_ready())
+PY
+) 2>&1 | redact | tee -a "$EVIDENCE"
+grep -Fxq "MCP_APP_READY_AFTER_RESTART" "$EVIDENCE" || fail "MCP app not ready after revision restart"
 
 (
 cd "$PROJECT_DIR"

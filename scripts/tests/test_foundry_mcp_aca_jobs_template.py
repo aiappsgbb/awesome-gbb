@@ -97,6 +97,14 @@ class JobsFixtureStabilityTests(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "chain"):
                 module.verify_agent_calls(broken, "MARK", None)
 
+    def test_hosted_invoke_waits_for_restarted_mcp_app(self):
+        tail = self.script.split("az containerapp revision restart", 1)[1]
+        restart_wait, hosted = tail.split('"## Step 6', 1)[0], tail
+        self.assertLess(hosted.index("MCP_APP_READY_AFTER_RESTART"), hosted.index('invoke_once(openai, "hosted"'))
+        self.assertIn("no new running MCP replica after revision restart", restart_wait)
+        self.assertIn("for attempt in $(seq 1 36); do", restart_wait)
+        self.assertIn("for _ in range(24):", restart_wait)
+
     def test_hosted_deploy_retry_is_bounded_and_404_only(self):
         self.assertIn("for attempt in 1 2 3; do", self.script)
         self.assertIn("grep -Eq '\\b404\\b|NotFound|Not Found'", self.script)
