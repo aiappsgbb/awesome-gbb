@@ -356,6 +356,37 @@ class JobsReuseTests(unittest.TestCase):
         self.assertFalse(state)
         self.assertTrue(all(args[:3] == ["rest", "--method", "delete"] for args in calls))
 
+    def test_image_cleanup_removes_untagged_run_owned_repository_only(self):
+        repo = reuse.image_repository(self.config, True)
+        receipt = {"repository": repo, "digest": "sha256:" + "a" * 64}
+
+        def run(tags, owned):
+            state = {"repo": True}
+            calls = []
+
+            def cli(config, args, **kwargs):
+                calls.append(args[:3])
+                if args[:3] == ["acr", "repository", "show"]:
+                    return {"name": repo} if state["repo"] else None
+                if args[:3] == ["acr", "repository", "show-tags"]:
+                    return tags
+                if args[:3] == ["acr", "repository", "delete"] and "--repository" in args:
+                    state["repo"] = False
+                return None
+            with patch.object(reuse, "image_metadata", return_value=None), patch.object(reuse, "cli", side_effect=cli):
+                reuse.cleanup_image(self.config, receipt, hosted=True,
+                                    run_owned_repositories=[repo] if owned else [])
+            return state, calls
+
+        state, calls = run([], True)
+        self.assertFalse(state["repo"])
+        self.assertEqual(calls[-1], ["acr", "repository", "show"])
+        with self.assertRaisesRegex(reuse.ReuseError, "IMAGE_REPOSITORY_STILL_TAGGED"):
+            run(["other"], True)
+        state, calls = run([], False)
+        self.assertTrue(state["repo"])
+        self.assertEqual(calls, [])
+
     def test_image_cleanup_rejects_shared_repo_or_changed_manifest(self):
         with patch.object(reuse, "cli") as cli:
             with self.assertRaises(reuse.ReuseError):

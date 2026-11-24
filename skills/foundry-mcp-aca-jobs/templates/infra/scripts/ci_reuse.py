@@ -137,6 +137,9 @@ ACR_ABSENT = r"manifest unknown|name unknown|the specified tag does not exist"
 def not_found(args, stderr):
     if re.search(r'"code"\s*:\s*"(' + ABSENT_CODES + r')"|\((' + ABSENT_CODES + r')\)', stderr):
         return True
+    if args[:2] == ["acr", "repository"]:
+        # az acr repository show: `Error: repository "<name>" is not found.`
+        return re.search(r'repository "[^"]+" is not found|\bNAME_UNKNOWN\b', stderr) is not None
     return args[:2] == ["acr", "manifest"] and re.search(
         r"\b(MANIFEST_UNKNOWN|NAME_UNKNOWN)\b|" + ACR_ABSENT, stderr, re.IGNORECASE) is not None
 
@@ -475,16 +478,27 @@ def cleanup(config, manifest, created):
             raise ReuseError("CLEANUP_ABSENCE_UNVERIFIED")
 
 
-def cleanup_image(config, image, *, hosted=False):
+def cleanup_image(config, image, *, hosted=False, run_owned_repositories=()):
     require(image.get("repository") == image_repository(config, hosted)
             and re.fullmatch(r"sha256:[0-9a-f]{64}", image.get("digest", "")), "IMAGE_OWNERSHIP_MANIFEST")
+    registry = config["registry"].rsplit("/", 1)[1]
     actual = image_metadata(config, absent=True, hosted=hosted)
-    if actual is None:
+    if actual is not None:
+        require(actual.get("digest") == image["digest"] and actual.get("tags") == ["run"], "IMAGE_CHANGED")
+        cli(config, ["acr", "repository", "delete", "--name", registry,
+                     "--image", image["repository"] + "@" + image["digest"], "--yes"])
+        require(image_metadata(config, absent=True, hosted=hosted) is None, "IMAGE_ABSENCE_UNVERIFIED")
+    # The run-unique repository was recorded absent before the run; remove the
+    # untagged manifests a deploy can leave behind, never a tagged or shared one (#488).
+    if image["repository"] not in run_owned_repositories:
         return
-    require(actual.get("digest") == image["digest"] and actual.get("tags") == ["run"], "IMAGE_CHANGED")
-    cli(config, ["acr", "repository", "delete", "--name", config["registry"].rsplit("/", 1)[1],
-                 "--image", image["repository"] + "@" + image["digest"], "--yes"])
-    require(image_metadata(config, absent=True, hosted=hosted) is None, "IMAGE_ABSENCE_UNVERIFIED")
+    show = ["acr", "repository", "show", "--name", registry, "--repository", image["repository"]]
+    if cli(config, show, absent=True) is None:
+        return
+    tags = cli(config, ["acr", "repository", "show-tags", "--name", registry, "--repository", image["repository"]])
+    require(not tags, "IMAGE_REPOSITORY_STILL_TAGGED")
+    cli(config, ["acr", "repository", "delete", "--name", registry, "--repository", image["repository"], "--yes"])
+    require(cli(config, show, absent=True) is None, "IMAGE_REPOSITORY_ABSENCE_UNVERIFIED")
 
 
 def invoke_once(client, kind, options):
@@ -568,7 +582,8 @@ def main():
                         rid, version = owned(config)[key]
                         require(get(config, rid, version, absent=True) is None, "IMAGE_STILL_DEPLOYED")
                     cleanup_image(config, load(args.project / ("ci-hosted-image.json" if args.hosted_image else "ci-image.json")),
-                                  hosted=args.hosted_image)
+                                  hosted=args.hosted_image,
+                                  run_owned_repositories=manifest.get("image_repositories_absent_before", []))
                 else:
                     cleanup(config, manifest, load(args.project / "ci-created.json"))
     except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as error:
