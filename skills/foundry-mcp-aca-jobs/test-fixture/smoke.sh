@@ -259,7 +259,10 @@ jq -e \
 (
   cd "$PROJECT_DIR"
   AZURE_ENV_NAME="$AZD_ENV_NAME" azd up --no-prompt
-) || fail "azd up failed"
+) > "$SCRATCH_ROOT/azd-up.log" 2>&1 || {
+  tail -n 60 "$SCRATCH_ROOT/azd-up.log" | redact >> "$EVIDENCE"
+  fail "azd up failed"
+}
 python3 "$PROJECT_DIR/infra/scripts/ci_reuse.py" record-image \
   --project "$PROJECT_DIR" || fail "exact run image not recorded"
 
