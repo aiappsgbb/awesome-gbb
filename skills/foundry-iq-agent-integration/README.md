@@ -1,4 +1,8 @@
-# foundry-iq
+# foundry-iq-agent-integration
+
+Wire Foundry IQ (Azure AI Search) knowledge bases into agents you build. Renamed
+from `foundry-iq` in 3.0.0 to avoid a name collision with the official
+`foundry-iq-skills` plugin, which owns graphs, ontologies and KB diagnosis.
 
 Enterprise RAG for Microsoft Foundry via Foundry IQ — Azure AI Search Knowledge
 Bases with agentic retrieval (multi-hop reasoning, query planning,

@@ -7,7 +7,7 @@ description: >
   Covers Bicep, the Foundry account-level telemetry connection, ACA
   instrumentation, Monitoring Metrics Publisher RBAC, KQL queries and
   Foundry Insights monitors (judge sizing, cost, teardown). Read the
-  body for the 3-layer wiring; do not instrument from this summary.
+  body for the 3-layer wiring before instrumenting.
   USE FOR: app insights, application insights, OpenTelemetry, OTel,
   configure_azure_monitor, agent traces missing, no telemetry, blank
   appin, log analytics, KQL, observability, trace MCP, silent cron,
@@ -16,9 +16,9 @@ description: >
   silent injection, server_error telemetry, agent insights,
   agent_insight_monitors, judge TPM.
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
-  (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
+  (threadlight-safe-check), Foundry IQ monitoring (foundry-iq-agent-integration).
 metadata:
-  version: "1.3.0"
+  version: "1.3.1"
 ---
 
 # Foundry Observability

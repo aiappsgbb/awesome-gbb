@@ -1,7 +1,7 @@
 ---
 name: foundry-prompt-agents
 description: >
-  Manage Foundry prompt agents — declarative agents that
+  Foundry prompt agents: declarative agents that
   combine a model, instructions, and tools without containers or
   custom code. Covers azure-ai-projects SDK (PromptAgentDefinition),
   tool wiring (web search, code interpreter, file search, MCP,
@@ -16,9 +16,9 @@ description: >
   publish agent, Foundry Agent Service. DO NOT USE FOR: hosted
   container agents (use foundry-hosted-agents), MAF agent framework,
   MCP server deployment (use foundry-mcp-aca), agent evaluation (use
-  foundry-evals), Knowledge Base / retrieval (use foundry-iq).
+  foundry-evals), KB retrieval (use foundry-iq-agent-integration).
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
@@ -632,7 +632,7 @@ from azure.ai.projects.models import (
 | Container/code agents with MAF | `foundry-hosted-agents` |
 | Deploy MCP servers for tool wiring | `foundry-mcp-aca` |
 | Durable tool execution or callback fallback | `foundry-mcp-aca-jobs` |
-| RAG via Knowledge Bases | `foundry-iq` |
+| RAG via Knowledge Bases | `foundry-iq-agent-integration` |
 | Agent evaluation | `foundry-evals` |
 | MAF hosted-agent action governance (not prompt-agent content filtering) | `foundry-agt` |
 | Observability & tracing | `foundry-observability` |

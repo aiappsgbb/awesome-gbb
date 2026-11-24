@@ -1,34 +1,39 @@
 ---
-name: foundry-iq
+name: foundry-iq-agent-integration
 description: >
-  Build enterprise RAG with Foundry IQ (Azure AI Search) knowledge sources and
-  knowledge bases: agentic retrieval with minimal, low or medium reasoning effort
-  on GA REST 2026-10-01, citations, the KB MCP endpoint (2026-11-01-preview),
-  Foundry Agent Service wiring (RemoteTool connection, ProjectManagedIdentity,
-  knowledge_base_retrieve), knowledgeRetrieval billing and query-time permission
-  trimming. Separates GA, preview and legacy 2025-05 agents.
-  USE FOR: knowledge base, RAG, agentic retrieval, policy assistant, citations,
-  multi-hop QA, AI Search Knowledge Base, document grounding, foundry-iq, kb-mcp,
-  knowledge_base_retrieve, reasoning effort, Microsoft Retriever 1, permission
-  trimming, x-ms-query-source-authorization, knowledgeRetrieval 402, hybrid
-  search, web iq boundary.
-  DO NOT USE FOR: structured-document extraction (use foundry-doc-vision-speech),
-  standalone Work IQ, Fabric IQ, or Web IQ workloads, MCP server deployment (use
-  foundry-mcp-aca), agent runtime (use foundry-hosted-agents).
+  Wire Foundry IQ (Azure AI Search) knowledge bases into agents you build:
+  hosted Agent Framework agents via SDK retrieve tool, KB MCP with httpx.Auth
+  or Toolbox; Agent Service wiring (RemoteTool connection,
+  ProjectManagedIdentity, knowledge_base_retrieve); azd bootstrap hardening.
+  Covers GA REST 2026-10-01 vs 2026-11-01-preview KB MCP, reasoning effort,
+  citations, knowledgeRetrieval billing and query-time permission trimming.
+  USE FOR: knowledge base in a hosted agent, agent RAG, kb-mcp, KB MCP
+  httpx.Auth, knowledge_base_retrieve, Toolbox knowledge base, azd bootstrap
+  Foundry IQ, policy assistant, citations, x-ms-query-source-authorization,
+  permission trimming, knowledgeRetrieval 402.
+  DO NOT USE FOR: entity or topic graphs, ontologies, querying or diagnosing
+  an existing knowledge base (use the official foundry-iq-skills plugin),
+  document extraction (use foundry-doc-vision-speech), MCP server deployment
+  (use foundry-mcp-aca), agent runtime (use foundry-hosted-agents), Work IQ,
+  Fabric IQ or Web IQ.
 metadata:
-  version: "2.1.0"
+  version: "3.0.0"
 ---
 
 # Foundry IQ Agent Framework Integration Skill
 
-> **Default knowledge retrieval pattern for EVERY threadlight process.**
-> SPEC § 7 (Knowledge Sources) must declare at least one Knowledge Base per process,
-> with `Backing service: foundry-iq` (the default — alternatives are `mcp-search`
-> or `inline-context` only when foundry-iq is genuinely overkill, e.g., a process
-> with literally zero domain documents).
+> **Scope (3.0.0, renamed from `foundry-iq`).** This skill covers getting a
+> Foundry IQ knowledge base *into an agent you build*: hosted Microsoft Agent
+> Framework agents (SDK tool, KB MCP via `httpx.Auth`, or Toolbox), Foundry
+> Agent Service wiring, the azd bootstrap hardening checklist and the live test
+> fixture. For entity graphs, topic graphs, ontologies, querying or diagnosing
+> an existing knowledge base, use Microsoft's official `foundry-iq-skills`
+> plugin (its skill is named `foundry-iq`):
+> [install Foundry IQ skills in GitHub Copilot CLI](https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-install-foundry-iq-skills).
 >
-> See `threadlight-design/SKILL.md` → "Knowledge sources (default = foundry-iq)"
-> for the rule. This skill is the implementation of that default.
+> Threadlight processes that declare `Backing service: foundry-iq` in SPEC § 7
+> use this skill for the agent-side implementation; see
+> `threadlight-design/SKILL.md` → "Knowledge sources".
 
 ## Input contract / Output artifacts
 
@@ -222,7 +227,7 @@ project-root/
 +-- .env                           # All configuration (never hardcode!)
 |
 +-- src/
-|   +-- foundry-iq/
+|   +-- knowledge-api/
 |       +-- app/
 |       |   +-- __init__.py
 |       |   +-- main.py            # FastAPI application & endpoints
@@ -238,7 +243,7 @@ project-root/
 |
 +-- .github/
 |   +-- skills/
-|       +-- foundry-iq/
+|       +-- foundry-iq-agent-integration/
 |           +-- SKILL.md           # This documentation
 |           +-- scripts/           # Reusable building blocks
 |               +-- __init__.py
@@ -269,7 +274,7 @@ you cannot use managed identity or `az login`.
 > - Assign UAMI roles per the matrix below — NOT keys, NOT shared admin keys
 > - Strip `AZURE_OPENAI_API_KEY` and `AI_SEARCH_KEY` from the deployed `.env` (they're for local dev only)
 >
-> Required RBAC for foundry-iq runtime (assign to the agent's UAMI):
+> Required RBAC for the Foundry IQ runtime (assign to the agent's UAMI):
 >
 > | Resource | Role | Role ID |
 > |----------|------|---------|
@@ -900,7 +905,7 @@ response = requests.post(url, headers=headers, json=request_body)
 
 ## Bootstrap script: hardening checklist
 
-> **The single biggest unforced quality regression in foundry-iq deploys is
+> **The single biggest unforced quality regression in Foundry IQ deploys is
 > a bootstrap script that *says* it succeeded while leaving the index empty
 > or partially populated.** Every item below has been observed in the wild
 > at least once. Treat the checklist as mandatory for any
@@ -1333,7 +1338,7 @@ Example: "Employees receive 15 PTO days [0:1+pto_policy.md]"
 | [**threadlight-design**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design/) | Generates SPEC.md § 7 Knowledge Sources — the input contract for this skill |
 | [**threadlight-deploy**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy/) | Phase 6 (Module Composer) wires `foundry-iq-index.bicep` when SPEC § 7 declares `Backing service: foundry-iq` |
 | [**azd-patterns**](../azd-patterns/) | Owns the `foundry-iq-index.bicep` module shape |
-| [**foundry-doc-vision-speech**](../foundry-doc-vision-speech/) | Pairs with this skill: extract structured text from raw docs (foundry-doc-vision-speech) → index it for retrieval (foundry-iq) |
-| [**foundry-mcp-aca**](../foundry-mcp-aca/) | Alternative knowledge backing (`mcp-search`) when foundry-iq is genuinely overkill — prefer foundry-iq by default |
+| [**foundry-doc-vision-speech**](../foundry-doc-vision-speech/) | Pairs with this skill: extract structured text from raw docs (foundry-doc-vision-speech) → index it for retrieval (this skill) |
+| [**foundry-mcp-aca**](../foundry-mcp-aca/) | Alternative knowledge backing (`mcp-search`) when a Foundry IQ knowledge base is genuinely overkill — prefer Foundry IQ by default |
 | [**foundry-evals**](../foundry-evals/) | Evaluates retrieval precision, citation accuracy, multi-hop reasoning quality |
 | [**foundry-hosted-agents**](../foundry-hosted-agents/) | The hosted agent that calls this knowledge base as a tool |

@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.6.1"
+  version: "1.6.2"
 ---
 
 # AZD Tips & Patterns
@@ -1432,7 +1432,7 @@ scale: {
 | [**threadlight-design**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design/) | Defines SPEC § 11c selectors that drive module inclusion |
 | [**foundry-mcp-aca**](../foundry-mcp-aca/) | Owns the `aca-mcp.bicep` shape |
 | [**foundry-teams-bot**](../foundry-teams-bot/) | Owns the `aca-bot.bicep` shape |
-| [**foundry-iq**](../foundry-iq/) | Owns the `foundry-iq-index.bicep` shape |
+| [**foundry-iq-agent-integration**](../foundry-iq-agent-integration/) | Owns the `foundry-iq-index.bicep` shape |
 | [**threadlight-event-triggers**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-event-triggers/) | Owns the event-trigger ACA Job variant (cron/manual receiver wiring); the canonical generic/manual `aca-job.bicep` module lives here |
 | [**foundry-hosted-agents**](../foundry-hosted-agents/) | Owns the `foundry-account.bicep` shape |
 | [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | Adds Citadel hub wiring AFTER the base Bicep is provisioned (opt-in via SPEC § 11b `citadel.required: yes`) |

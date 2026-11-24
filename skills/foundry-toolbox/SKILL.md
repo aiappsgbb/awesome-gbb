@@ -1,11 +1,11 @@
 ---
 name: foundry-toolbox
 description: >
-  Use Microsoft Foundry Toolbox GA to manage versioned multi-tool bundles
+  Use Foundry Toolbox GA to manage versioned multi-tool bundles
   behind a single MCP endpoint and connect them to hosted agents. Covers
   stable AIProjectClient.toolboxes CRUD, SDK models,
   agent_framework_foundry_hosting.FoundryToolbox, authentication,
-  immutable-version promotion and rollback, the azd ai toolbox declarative
+  version promotion and rollback, the azd ai toolbox declarative
   path, A2A 1.0 GA and stable Tool Search. Distinguishes these from
   preview A2A 0.3, Work IQ, Fabric IQ, Browser Automation, Reminder, and skills in
   Toolboxes; explains that azure_ai_search wraps an index, not a Foundry IQ
@@ -15,10 +15,10 @@ description: >
   ToolSearchToolboxTool, kind toolbox,
   host azure.ai.toolbox, toolbox.yaml. DO NOT USE FOR: building MCP servers
   (use foundry-mcp-aca),
-  KB-only RAG (use foundry-iq), generic hosted-agent runtime (use
+  KB-only RAG (use foundry-iq-agent-integration), generic hosted-agent runtime (use
   foundry-hosted-agents), cross-resource models (use foundry-cross-resource).
 metadata:
-  version: "2.4.0"
+  version: "2.4.1"
   validated: 2026-08-04
 ---
 
@@ -116,7 +116,7 @@ production composition, use `FoundryToolbox` in code.
 | **Multiple managed tools behind one endpoint** | **Toolbox** | Centralized creds, swap tools without agent redeploy, versioning |
 | **Single hosted MCP with static API key** | `client.get_mcp_tool()` (`foundry-hosted-agents` § MCP) | Simpler — no toolbox abstraction layer |
 | **MCP with short-lived AAD bearer (KB MCP, Storage behind PMI)** | `MCPStreamableHTTPTool` + `header_provider` (`foundry-hosted-agents`) | Toolbox MCP endpoint can wrap it, but direct `header_provider` is one less hop |
-| **KB-only RAG with agentic retrieval / multi-hop / citations** | `foundry-iq` (Knowledge Base, NOT Toolbox `azure_ai_search`) | Toolbox `azure_ai_search` wraps an INDEX, not a KB — no query planning or answer synthesis |
+| **KB-only RAG with agentic retrieval / multi-hop / citations** | `foundry-iq-agent-integration` (Knowledge Base, NOT Toolbox `azure_ai_search`) | Toolbox `azure_ai_search` wraps an INDEX, not a KB — no query planning or answer synthesis |
 | **Custom MCP server you build + deploy** | `foundry-mcp-aca` to build the server, **then wire it INTO a Toolbox** | These compose: build with one skill, manage centrally with this one |
 | **Cross-resource model invocation** | `foundry-cross-resource` | Toolbox is for *tools*, not models |
 | **Vision / DocIntel / Speech tools** | `foundry-doc-vision-speech` patterns wrapped via Toolbox `openapi` or `mcp` | Toolbox is the consumption layer |
@@ -234,7 +234,7 @@ Playground, multi-user and lifecycle acceptance gaps are documented separately.
 
 > **Hosted MAF / GHCP agent identity:** the calling identity at runtime
 > is `instance_identity.principal_id`, not the project / account MIs. See
-> `foundry-iq` § Hosted-agent runtime identity for the full breakdown
+> `foundry-iq-agent-integration` § Hosted-agent runtime identity for the full breakdown
 > (same identity model applies to Toolbox tool calls).
 
 ---
@@ -1021,7 +1021,7 @@ If you need KB-grade retrieval through a toolbox, use the `mcp` tool
 type pointing at the KB MCP endpoint with a connection that authenticates
 PMI to `https://search.azure.com/.default`.
 
-> **Cross-skill ownership note:** For producing a KB-MCP server on ACA, see `foundry-mcp-aca`. For consuming a KB via the IQ-style pattern, see `foundry-iq`. **THIS SKILL covers the toolbox WRAPPER pattern for a KB-MCP** — i.e. exposing it as a managed multi-tool through the toolbox endpoint.
+> **Cross-skill ownership note:** For producing a KB-MCP server on ACA, see `foundry-mcp-aca`. For consuming a KB via the IQ-style pattern, see `foundry-iq-agent-integration`. **THIS SKILL covers the toolbox WRAPPER pattern for a KB-MCP** — i.e. exposing it as a managed multi-tool through the toolbox endpoint.
 
 **Declarative connection excerpt:**
 
@@ -1036,7 +1036,7 @@ PMI to `https://search.azure.com/.default`.
 
 Pass `kb-mcp` as the `project_connection_id` of an `MCPToolboxTool`. The
 trade-off is an extra hop through Toolbox, while the Toolbox handles
-centralized token refresh. See `foundry-iq` SKILL § "KB access from a hosted
+centralized token refresh. See `foundry-iq-agent-integration` SKILL § "KB access from a hosted
 MAF agent — three routes" for the direct-wire alternative.
 
 **Imperative provisioning (ARM REST + SDK):** When the declarative connection
@@ -1368,8 +1368,8 @@ Sources: [A2A protocol/version contract](https://learn.microsoft.com/azure/found
 |---|---|
 | Build a custom MCP server, then add it to a Toolbox | `foundry-mcp-aca` for the server, then this skill's `host: azure.ai.toolbox` or `MCPToolboxTool` path |
 | Deploy and operate the hosted MAF agent runtime | `foundry-hosted-agents`; use this skill's `FoundryToolbox` reference for the Toolbox consumer |
-| Get KB-grade RAG with planning, multi-hop retrieval, and citations | `foundry-iq` (not Toolbox `azure_ai_search`) |
-| Wrap a knowledge-base MCP endpoint behind a Toolbox | `foundry-iq` for the KB endpoint, then this skill's `MCPToolboxTool` connection pattern |
+| Get KB-grade RAG with planning, multi-hop retrieval, and citations | `foundry-iq-agent-integration` (not Toolbox `azure_ai_search`) |
+| Wrap a knowledge-base MCP endpoint behind a Toolbox | `foundry-iq-agent-integration` for the KB endpoint, then this skill's `MCPToolboxTool` connection pattern |
 | Apply shared `azd` hooks, Bicep, and environment conventions | `azd-patterns`; the Toolbox service itself remains `host: azure.ai.toolbox` |
 | Deploy behind private networking | `foundry-vnet-deploy`, then check this skill's per-tool VNet matrix |
 | Add human approval UX around tool execution | [`threadlight-hitl-patterns`](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-hitl-patterns) |
@@ -1412,4 +1412,4 @@ Sources: [A2A protocol/version contract](https://learn.microsoft.com/azure/found
 - `1.0.0` — initial skill. Covers all 7 tool types, preview-era MCP compatibility guidance,
   MAF / LangGraph / Copilot SDK / azd wire-up, versioning workflow, MCP
   auth flavors, VNet matrix, and cross-references to existing
-  `foundry-hosted-agents` and `foundry-iq` Toolbox callouts.
+  `foundry-hosted-agents` and `foundry-iq-agent-integration` Toolbox callouts.

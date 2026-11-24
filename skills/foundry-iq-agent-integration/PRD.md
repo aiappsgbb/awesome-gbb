@@ -3,7 +3,7 @@
 ## Document Information
 | Field | Value |
 |-------|-------|
-| Skill Name | Foundry IQ |
+| Skill Name | foundry-iq-agent-integration (renamed from foundry-iq in 3.0.0) |
 | Version | 1.2 |
 | Last Updated | July 2026 |
 | Status | Building Block |
@@ -164,7 +164,7 @@ This skill covers:
 your-app/
 ├── .env                    # Configuration
 ├── src/
-│   └── foundry-iq/
+│   └── knowledge-api/
 │       ├── app/
 │       │   ├── main.py     # FastAPI endpoints
 │       │   ├── models.py   # Request/response models

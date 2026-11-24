@@ -9,10 +9,10 @@ description: >
   STT, TTS, gpt-5.4-mini vision, gpt-5.4 vision, Document Intelligence prebuilt,
   custom doc model, Azure Speech, transcription.
   DO NOT USE FOR: deploying the agent itself (use threadlight-deploy), MCP server
-  deployment (use foundry-mcp-aca), Foundry IQ knowledge retrieval (use foundry-iq),
+  deployment (use foundry-mcp-aca), Foundry IQ knowledge retrieval (use foundry-iq-agent-integration),
   real-time voice / Voice Live (use foundry-voice-live).
 metadata:
-  version: "1.2.10"
+  version: "1.2.11"
 ---
 
 # Foundry Doc / Vision / Speech
@@ -39,9 +39,9 @@ the default `gpt-5.4-mini` model from `threadlight-deploy` is sufficient.
 ## When NOT to Use
 
 - **Pure chat agents** — `threadlight-deploy` handles the chat model
-- **Knowledge retrieval over documents** — that's `foundry-iq` (semantic search
+- **Knowledge retrieval over documents** — that's `foundry-iq-agent-integration` (semantic search
   over already-indexed content). Use this skill for the **extraction step that
-  produces searchable text from unstructured docs**, then hand off to `foundry-iq`
+  produces searchable text from unstructured docs**, then hand off to `foundry-iq-agent-integration`
   for retrieval.
 - **MCP server deployment** — that's `foundry-mcp-aca`
 
@@ -299,7 +299,7 @@ auth (rare — typically air-gapped lab), they explicitly opt in.
 | **Vision via Foundry Responses** | Same as chat | Same as chat | Same as chat | Vision is a content-part on the chat call — no extra role |
 | **Document Intelligence (direct SDK)** | Agent's UAMI | `Cognitive Services User` on the **DocIntel resource** | `https://cognitiveservices.azure.com/.default` | **NOT `Cognitive Services Contributor`** — Contributor only allows listing keys, and is denied at runtime when `disableLocalAuth: true`. Verified May 2026. |
 | **Azure Speech (direct SDK)** | Agent's UAMI | `Cognitive Services Speech User` (or `Speech Contributor`) on the **Speech resource** | `https://cognitiveservices.azure.com/.default` | **REQUIRES custom subdomain** (one-time, **IRREVERSIBLE** — see Speech section) |
-| **Azure AI Search (foundry-iq RAG)** | Agent's UAMI | `Search Index Data Reader` on Search service | `https://search.azure.com/.default` | Add `Search Service Contributor` for index management roles only |
+| **Azure AI Search (Foundry IQ RAG)** | Agent's UAMI | `Search Index Data Reader` on Search service | `https://search.azure.com/.default` | Add `Search Service Contributor` for index management roles only |
 | **Foundry continuous-eval** (Plan A built-in) | **Foundry project's own MI** (NOT the agent's UAMI) | `Azure AI User` on the project | n/a (server-side) | Project MI runs the scheduled evaluators against the agent — no consumer code |
 | **Continuous-eval (Plan B ACA Job)** | Job's UAMI | `Azure AI User` on project + `Storage Blob Data Contributor` on results container | `https://ai.azure.com/.default` | Only if Plan A doesn't yet support your hosted-agent type |
 
@@ -807,7 +807,7 @@ merges both streams into the single KB index:
 {"id": "comm-day1-overdue-evo", "source_file": "Overdue balance evo step 1 day 1.jpg", "source_type": "comms", "kind": "visual", "visual_kind": "comm", "page_ref": null, "version": "current", "title": "Day-1 overdue EVO email", "content": "META:\n- channel: email\n- audience: ...\n\nMESSAGE BODY:\n<verbatim>\n\nDESIGN NOTES:\n..."}
 ```
 
-Cross-link with `foundry-iq` SKILL § 9 (visual chunks with `page_ref`)
+Cross-link with `foundry-iq-agent-integration` SKILL § 9 (visual chunks with `page_ref`)
 for the corresponding KB-side schema and § 11 for the per-source
 manifest pattern that makes re-extract cheap (sha256 + mtime; skip
 unchanged sources).
@@ -909,7 +909,7 @@ Tool naming: verb_noun snake_case, prefixed by modality
 | [**threadlight-design**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design/) | Generates SPEC.md § 7b — the input contract |
 | [**threadlight-deploy**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy/) | Phase 6 (Module Composer) wires the Bicep modules this skill selects |
 | [**azd-patterns**](../azd-patterns/) | Owns the Bicep module shapes (`vision.bicep`, `doc-intel.bicep`, `speech.bicep`) |
-| [**foundry-iq**](../foundry-iq/) | Pairs with this skill: extract structured text from docs (this skill) → index it for retrieval (foundry-iq) |
+| [**foundry-iq-agent-integration**](../foundry-iq-agent-integration/) | Pairs with this skill: extract structured text from docs (this skill) → index it for retrieval (foundry-iq-agent-integration) |
 | [**foundry-mcp-aca**](../foundry-mcp-aca/) | If the vision / doc / speech tool needs to wrap a mocked external system |
 | [**threadlight-demo-data-factory**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-demo-data-factory/) | Generates the sample images / docs / audio for the demo |
 | [**foundry-evals**](../foundry-evals/) | Evaluates per-tool accuracy (extraction precision, vision-score correlation, transcription WER) |

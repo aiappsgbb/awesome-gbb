@@ -1,5 +1,25 @@
 # Changelog
 
+## 6.0.0 — Unreleased — foundry-iq renamed to foundry-iq-agent-integration
+
+- **Breaking:** rename `foundry-iq` → [`foundry-iq-agent-integration`](skills/foundry-iq-agent-integration/SKILL.md)
+  MAJOR **2.1.0 → 3.0.0** ([#555](https://github.com/aiappsgbb/awesome-gbb/issues/555)).
+  Microsoft's official `foundry-iq-skills` plugin also ships a skill named
+  `foundry-iq`; with both installed the runtime saw two `foundry-iq` skills.
+  The renamed skill is re-scoped to agent-side integration (hosted Agent
+  Framework agents via SDK tool, KB MCP with `httpx.Auth` or Toolbox, Agent
+  Service wiring, azd bootstrap hardening, live fixture) and routes entity/topic
+  graphs, ontologies and KB querying/diagnosis to the official plugin
+  ([install page](https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-install-foundry-iq-skills)).
+  Content is unchanged from 2.1.0. Reinstall with
+  `gh skill install aiappsgbb/awesome-gbb foundry-iq-agent-integration`.
+- Cross-references updated (PATCH): `foundry-observability` 1.3.1,
+  `foundry-evals` 1.6.1, `foundry-prompt-agents` 1.2.1, `foundry-toolbox` 2.4.1,
+  `foundry-hosted-agents` 3.1.1, `foundry-doc-vision-speech` 1.2.11,
+  `azd-patterns` 1.6.2. Fixture registration renamed in `.github/skill-deps.yml`;
+  the standing Search service, its resource group and workload tag are unchanged.
+- Plugin and marketplace **5.3.0 → 6.0.0** (skill rename).
+
 ## 5.3.0 — Unreleased — html-deck-to-pptx
 
 - Add [`html-deck-to-pptx`](skills/html-deck-to-pptx/SKILL.md) **1.0.0**: convert an
