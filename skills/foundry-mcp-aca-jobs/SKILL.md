@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "3.0.1"
+  version: "3.1.0"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -116,7 +116,17 @@ For clients without MCP Tasks, expose the explicit tools:
 
 These tools are a compatibility path, not a second workflow model. They still
 write the same control record and still persist results through the same worker.
-Their public response shapes are closed:
+
+**Clients that opt in to Tasks but cannot consume a task handle.** In a live test
+on 2026-11-24, Foundry Agent Service MCP tools (prompt agent `MCPTool`) declared
+`io.modelcontextprotocol/tasks` on `tools/call` but never polled `tasks/get` after
+a `CreateTaskResult`; the response failed with `400 tool_user_error` ("A user error
+occurred while executing a tool call") while the job had already started. Such a
+caller sends the header `X-MCP-Task-Mode: inline` (set it in the tool `headers`);
+the adapter then returns the compatibility result inline instead of a task handle.
+Every other opted-in caller keeps the standards-first Tasks path.
+
+The compatibility tools' public response shapes are closed:
 
 - `start_aca_job` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, `pollAfterMs` (`2000`), and `effectState`.
 - `get_aca_job_status` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, `resultUrl`, `errorCode`, `createdAt`, `updatedAt`, and `effectState`.

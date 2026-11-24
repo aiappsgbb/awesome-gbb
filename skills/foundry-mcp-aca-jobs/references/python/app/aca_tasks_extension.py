@@ -142,6 +142,14 @@ _TASK_METHOD_VERSIONS = tuple(MODERN_PROTOCOL_VERSIONS)
 _TASK_EXTENSION_ID = "io.modelcontextprotocol/tasks"
 _TASK_TTL_MS = 86_400_000
 _TASK_POLL_INTERVAL_MS = 2_000
+INLINE_TASK_MODE_HEADER = "x-mcp-task-mode"
+
+
+def _requests_inline_result(headers: dict[str, Any]) -> bool:
+    for key, value in headers.items():
+        if str(key).lower() == INLINE_TASK_MODE_HEADER:
+            return str(value).strip().lower() == "inline"
+    return False
 
 
 def _task_model(name: str) -> type[Any]:
@@ -279,9 +287,14 @@ class AcaTasksExtension(ServerExtension):
             return await call_next()
         if context.client_extension_settings(self.identifier) is None:
             return await call_next()
+        headers = get_http_headers() or {}
+        if _requests_inline_result(headers):
+            # Explicit caller opt-out: some clients (Foundry Agent Service, observed
+            # 2026-11) declare the tasks extension but cannot consume CreateTaskResult.
+            return await call_next()
 
         request = StartRequest.model_validate(getattr(params, "arguments", {}) or {})
-        owner_scope = self._owner_resolver(get_http_headers() or {})
+        owner_scope = self._owner_resolver(headers)
         try:
             task = await self._orchestrator.start(request, owner_scope)
         except PublicError as error:

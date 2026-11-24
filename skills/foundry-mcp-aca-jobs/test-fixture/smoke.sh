@@ -520,6 +520,8 @@ try:
                     # Static bearer is smoke-only; production must use project_connection_id.
                     # The service rejects sensitive Authorization values in headers.
                     authorization=access_token,
+                    # Foundry opts in to MCP tasks but cannot consume a task handle.
+                    headers={"X-MCP-Task-Mode": "inline"},
                     require_approval="never",
                 )
             ],
@@ -629,7 +631,8 @@ def main():
         name="ACA Jobs",
         url=os.environ["MCP_SERVER_URL"],
         # Static bearer is smoke-only; production must use a header provider.
-        headers={"Authorization": "Bearer " + access_token},
+        # Foundry opts in to MCP tasks but cannot consume a task handle (#488).
+        headers={"Authorization": "Bearer " + access_token, "X-MCP-Task-Mode": "inline"},
         approval_mode="never_require",
     )
     agent = Agent(

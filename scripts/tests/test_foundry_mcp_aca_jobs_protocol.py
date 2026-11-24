@@ -986,6 +986,32 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome, "pass-through")
         call_next.assert_awaited_once()
 
+    async def test_opted_in_start_with_inline_header_passes_through(self) -> None:
+        # Foundry Agent Service opts in to tasks but cannot consume CreateTaskResult (#488).
+        orchestrator = FakeOrchestrator(self.task)
+        extension = AcaTasksExtension(orchestrator, self.owner_resolver)
+        call_next = AsyncMock(return_value="pass-through")
+        request = types.SimpleNamespace(name="start_aca_job", arguments={
+            "jobType": "batch", "idempotencyKey": "key-1",
+            "inputRef": "https://example.invalid/input.json", "callbackAlias": "callback",
+        })
+        context = FastMCPContext(
+            request_context=ServerRequestContext(protocol_version="2026-07-28"),
+            settings={"enabled": True},
+        )
+        for value in ("inline", " Inline "):
+            with self.subTest(value=value), patch(
+                "app.aca_tasks_extension.get_http_headers",
+                return_value={"x-ms-client-principal-id": "owner-a", "X-MCP-Task-Mode": value},
+            ):
+                outcome = await extension.intercept_tool_call(request, context, call_next)
+            self.assertEqual(outcome, "pass-through")
+        self.assertEqual(orchestrator.start_calls, [])
+        with patch("app.aca_tasks_extension.get_http_headers",
+                   return_value={"x-ms-client-principal-id": "owner-a", "x-mcp-task-mode": "task"}):
+            outcome = await extension.intercept_tool_call(request, context, call_next)
+        self.assertEqual(_dump_model(outcome)["status"], "working")
+
     async def test_awared_start_returns_create_task_result_without_calling_next(self) -> None:
         headers = {"x-ms-client-principal-id": "owner-a"}
         start_result = self.task.model_copy(update={"task_id": self.task.task_id, "created_at": self.task.created_at, "updated_at": self.task.updated_at})

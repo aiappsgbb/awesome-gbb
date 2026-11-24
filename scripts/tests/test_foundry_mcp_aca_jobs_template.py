@@ -429,7 +429,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "3.0.1")
+        self.assertEqual(skill_fm["metadata"]["version"], "3.1.0")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -1367,9 +1367,11 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("MCPTool(", fixture)
         self.assertIn("authorization=access_token", fixture)
         self.assertEqual(
-            fixture.count('headers={"Authorization": "Bearer " + access_token}'),
+            fixture.count('headers={"Authorization": "Bearer " + access_token, "X-MCP-Task-Mode": "inline"}'),
             1,
         )
+        # Both Foundry agent tools opt out of task handles they cannot consume (#488).
+        self.assertEqual(fixture.count('"X-MCP-Task-Mode": "inline"'), 2)
         self.assertNotIn('headers={"Authorization": f"Bearer {access_token}"}', fixture)
         self.assertIn("project.agents.create_version(", fixture)
         self.assertIn("openai.conversations.create()", fixture)
