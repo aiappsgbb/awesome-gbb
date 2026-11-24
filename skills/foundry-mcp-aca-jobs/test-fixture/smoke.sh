@@ -487,11 +487,18 @@ from azure.core.exceptions import ResourceNotFoundError
 from azure.storage.blob import BlobClient
 
 
+def first_json_object(output):
+    # Foundry may append further content blocks after the tool's JSON object.
+    value, _ = json.JSONDecoder().raw_decode((output or "{}").lstrip())
+    assert isinstance(value, dict), "MCP output is not a JSON object"
+    return value
+
+
 def verify_agent_calls(calls_by_name, marker, credential):
     for item in calls_by_name.values():
         assert getattr(item, "error", None) in (None, ""), "MCP call returned error"
-    started = json.loads(getattr(calls_by_name["start_aca_job"], "output", "") or "{}")
-    status = json.loads(getattr(calls_by_name["get_aca_job_status"], "output", "") or "{}")
+    started = first_json_object(getattr(calls_by_name["start_aca_job"], "output", ""))
+    status = first_json_object(getattr(calls_by_name["get_aca_job_status"], "output", ""))
     task_id = started.get("taskId")
     assert task_id and status.get("taskId") == task_id, "status call did not chain the start taskId"
     url = (

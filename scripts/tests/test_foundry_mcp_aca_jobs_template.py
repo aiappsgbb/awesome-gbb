@@ -85,7 +85,7 @@ class JobsFixtureStabilityTests(unittest.TestCase):
                 pass
 
         module.BlobClient = Blob
-        call = lambda output: types.SimpleNamespace(error=None, output=json.dumps(output))
+        call = lambda output: types.SimpleNamespace(error=None, output=json.dumps(output) + "\n" + json.dumps(output))
         env = {"MCP_ACA_JOBS_STORAGE_ACCOUNT_URL": "https://st.example", "MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME": "out"}
         good = {"start_aca_job": call({"taskId": "t1"}), "get_aca_job_status": call({"taskId": "t1"})}
         with patch.dict(os.environ, env):
